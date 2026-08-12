@@ -1,9 +1,9 @@
 name: Build Debug APK
 
 on:
-  workflow_dispatch:        # 手动触发：Actions 页面点 Run workflow
+  workflow_dispatch:
   push:
-    branches: [ main ]      # 推到 main 也自动构建
+    branches: [ main ]
 
 jobs:
   build:
@@ -18,11 +18,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install Gradle 8.7
-        run: |
-          curl -sL https://services.gradle.org/distributions/gradle-8.7-bin.zip -o gradle.zip
-          unzip -q gradle.zip
-          echo "$PWD/gradle-8.7/bin" >> $GITHUB_PATH
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: '8.7'
 
       - name: Install Android SDK
         run: |
@@ -36,8 +35,7 @@ jobs:
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME --licenses
 
       - name: Point project at SDK
-        run: |
-          echo "sdk.dir=$HOME/android-sdk" > local.properties
+        run: echo "sdk.dir=$HOME/android-sdk" > local.properties
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
