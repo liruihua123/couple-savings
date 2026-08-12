@@ -1,0 +1,32 @@
+# ===== Android 构建产物 =====
+*.apk
+*.aar
+*.ap_
+*.aab
+*.dex
+bin/
+gen/
+out/
+build/
+.gradle/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# ===== 本地环境 / IDE =====
+local.properties
+*.iml
+.idea/
+.DS_Store
+*.log
+vcs.xml
+
+# ===== 签名密钥（绝不入库） =====
+*.jks
+*.keystore
+
+# ===== lint 中间产物 =====
+lint/intermediates/
+lint/generated/
+lint/outputs/
+lint/tmp/
