@@ -64,22 +64,55 @@ object ApiService {
     }
 
     // ---------------- 认证 ----------------
+
+    /**
+     * 把 Supabase 认证接口的常见英文错误翻译成人话，避免 UI 出现 "HTTP 400: {...}" 天书。
+     * 仅拦截 4xx（客户端可自查的认证错误），其余原样上抛。
+     */
+    private fun translateAuthError(e: ApiException): ApiException {
+        if (e.code !in 400..499) return e
+        val err = runCatching {
+            json.parseToJsonElement(e.body).jsonObject["error"]?.jsonPrimitive?.content.orEmpty()
+        }.getOrDefault("")
+        val msg = when {
+            err.contains("email_not_confirmed", ignoreCase = true) ->
+                "邮箱尚未验证：请在 Supabase 后台 Authentication → Providers → Email 关闭「Confirm email」，或先完成邮箱验证后再登录。"
+            err.contains("invalid", ignoreCase = true) || err.contains("wrong", ignoreCase = true) ->
+                "邮箱或密码不正确。"
+            e.body.contains("User already registered", ignoreCase = true) ->
+                "该邮箱已注册过：请直接点「登录」；若之前注册未验证，请先在 Supabase 后台删除该账户再重新注册。"
+            else -> "认证失败(${e.code})：${e.body.take(160)}"
+        }
+        return ApiException(0, msg)
+    }
+
     suspend fun signUp(email: String, password: String): AuthUser {
         val body = json.encodeToString(
             MapSerializer(String.serializer(), String.serializer()),
             mapOf("email" to email, "password" to password)
         )
-        val resp = httpRequest("POST", "${SupabaseConfig.URL}/auth/v1/signup", body, anonHeaders())
+        val resp = try {
+            httpRequest("POST", "${SupabaseConfig.URL}/auth/v1/signup", body, anonHeaders())
+        } catch (e: ApiException) {
+            throw translateAuthError(e)
+        }
         val el = json.parseToJsonElement(resp).jsonObject
         val userEl = el["user"]!!.jsonObject
         val id = userEl["id"]!!.jsonPrimitive.content
         val mail = userEl["email"]?.jsonPrimitive?.content
-        // 注册成功且关闭了邮箱确认时，session 里同时带回 access/refresh 双令牌
-        el["session"]?.jsonObject?.let { s ->
-            val at = s["access_token"]?.jsonPrimitive?.content
-            val rt = s["refresh_token"]?.jsonPrimitive?.content.orEmpty()
-            at?.let { SessionManager.saveTokens(it, rt) }
+        // 注册接口返回了用户却没给会话，几乎都是因为 Supabase 开启了「邮箱确认」
+        val session = el["session"]?.jsonObject
+        if (session == null) {
+            throw ApiException(
+                0,
+                "账户已创建，但 Supabase 未发放登录会话——多半是后台开启了「邮箱确认(Confirm email)」。\n" +
+                "请到 Supabase 后台 Authentication → Providers → Email 关闭 Confirm email，" +
+                "并删除这个未验证的测试账户后重新注册。"
+            )
         }
+        val at = session["access_token"]?.jsonPrimitive?.content
+        val rt = session["refresh_token"]?.jsonPrimitive?.content.orEmpty()
+        at?.let { SessionManager.saveTokens(it, rt) }
         return AuthUser(id, mail)
     }
 
@@ -88,11 +121,15 @@ object ApiService {
             MapSerializer(String.serializer(), String.serializer()),
             mapOf("email" to email, "password" to password)
         )
-        val resp = httpRequest(
-            "POST",
-            "${SupabaseConfig.URL}/auth/v1/token?grant_type=password",
-            body, anonHeaders()
-        )
+        val resp = try {
+            httpRequest(
+                "POST",
+                "${SupabaseConfig.URL}/auth/v1/token?grant_type=password",
+                body, anonHeaders()
+            )
+        } catch (e: ApiException) {
+            throw translateAuthError(e)
+        }
         val el = json.parseToJsonElement(resp).jsonObject
         val id = el["user"]!!.jsonObject["id"]!!.jsonPrimitive.content
         val mail = el["user"]!!.jsonObject["email"]?.jsonPrimitive?.content
@@ -155,7 +192,15 @@ object ApiService {
                 null, authHeaders()
             )
         }
-        return json.decodeFromString<List<Profile>>(resp).first()
+        val list = json.decodeFromString<List<Profile>>(resp)
+        if (list.isEmpty()) {
+            throw ApiException(
+                0,
+                "未找到你的个人资料(profiles 表无记录)。请确认已在 Supabase 执行过 schema.sql，" +
+                "且注册时触发器 on_auth_user_created 已为账户创建 profile 行。"
+            )
+        }
+        return list.first()
     }
 
     suspend fun pair(inviteCode: String) {
