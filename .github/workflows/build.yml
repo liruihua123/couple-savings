@@ -38,24 +38,23 @@ jobs:
         run: echo "sdk.dir=$HOME/android-sdk" > local.properties
 
       - name: Build debug APK
-        # pipefail 确保 gradle 失败时步骤也失败；tee 把完整日志落盘，供下方 Artifact 上传
         run: |
           set -o pipefail
           gradle :app:assembleDebug --stacktrace 2>&1 | tee build.log
 
-      - name: Upload full build log (无论成败都上传，便于定位)
+      - name: Upload full build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
           path: build.log
 
-      - name: 抓取并高亮 Kotlin 编译错误(e: 行)
+      - name: Extract Kotlin errors
         if: always()
         run: |
-          echo "==================== KOTLIN ERRORS (e: 行) ===================="
-          grep -E "^e: " build.log || echo "(日志中未找到 e: 行)"
-          echo "==================== 结束 ===================="
+          echo "==================== KOTLIN ERRORS ===================="
+          grep "^e: " build.log || echo "(no e: lines found)"
+          echo "===================================================="
 
       - name: Upload APK
         if: success()
