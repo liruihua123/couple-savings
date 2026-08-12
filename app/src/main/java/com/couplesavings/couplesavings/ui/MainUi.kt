@@ -86,7 +86,7 @@ fun MainScreen(profile: Profile?, onLogout: () -> Unit) {
             TopAppBar(
                 title = { Text("情侣存款") },
                 actions = {
-                    IconButton(onClick = onLogout) { Icon(Icons.Filled.ExitToApp, "退出登录") }
+                    IconButton(onClick = onLogout) { Icon(Icons.Filled.Logout, "退出登录") }
                 }
             )
         },
