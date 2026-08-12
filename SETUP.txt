@@ -40,6 +40,8 @@ JDK / Gradle / Android SDK，**我没法在这里直接编出 .apk 文件**。
 1. 打开 https://supabase.com ，注册并 New Project（地区选离你近的）。
 2. 左侧 SQL Editor → New Query → 把本工程 schema.sql 全选粘贴 → Run。
    （自动建 4 张表 + 触发器 + 配对函数 + 行级安全策略）
+   注意：若你之前已经跑过旧版 schema.sql，直接【再跑一次】即可——脚本全是
+   "if not exists"，会安全补上新增的 snapshots(每日资产快照)表，不动已有数据。
 3. Project Settings → API，复制两个值备用：
    - Project URL        （形如 https://xxxxxxxx.supabase.co）
    - anon public key    （一长串）
@@ -97,6 +99,8 @@ JDK / Gradle / Android SDK，**我没法在这里直接编出 .apk 文件**。
 ============================================
 - 积存金用国际现货金价估算，与银行报价有微小点差，属正常。
 - "实时"靠 8 秒轮询；要毫秒级真推送可后续接 Supabase Realtime。
+- 总览页新增"收益走势"折线图：App 每次刷新自动把当天净资产 / 积存金盈亏
+  写入 snapshots 表，折线图读历史。首日只有 1 个点不画曲线，几天后自然成线（红涨绿跌）。
 - 没做转账/预算/收益折线图，需要再说，我给你加。
 - CI 里 Android SDK 命令行工具下载链接若 404（Google 偶尔升版本号），把
   build.yml 中 commandline-tools-linux-11076708_latest.zip 的 11076708 换成

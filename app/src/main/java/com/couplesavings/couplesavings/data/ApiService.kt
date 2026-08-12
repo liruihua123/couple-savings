@@ -232,4 +232,33 @@ object ApiService {
             httpRequest("DELETE", "${SupabaseConfig.URL}/rest/v1/transactions?id=eq.$id", null, authHeaders())
         }
     }
+
+    // ---------------- 每日资产快照（折线图） ----------------
+    /** 幂等写入当天快照：按 (couple_id, snapshot_date) 冲突则更新 */
+    suspend fun upsertSnapshot(snap: Snapshot) {
+        val me = myProfile()
+        val row = snap.copy(couple_id = me.couple_id)
+        val body = json.encodeToString(listOf(row))
+        withAuth {
+            httpRequest(
+                "POST",
+                "${SupabaseConfig.URL}/rest/v1/snapshots?on_conflict=couple_id,snapshot_date",
+                body,
+                authHeaders() + ("Prefer" to "upsert")
+            )
+        }
+    }
+
+    /** 读取本对情侣的全部历史快照，按日期升序 */
+    suspend fun listSnapshots(): List<Snapshot> {
+        val me = myProfile()
+        val resp = withAuth {
+            httpRequest(
+                "GET",
+                "${SupabaseConfig.URL}/rest/v1/snapshots?couple_id=eq.${me.couple_id}&select=*&order=snapshot_date.asc",
+                null, authHeaders()
+            )
+        }
+        return json.decodeFromString(resp)
+    }
 }

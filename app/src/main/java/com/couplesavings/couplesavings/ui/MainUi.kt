@@ -1,6 +1,7 @@
 package com.couplesavings.couplesavings.ui
 
 import android.graphics.Color as AndroidColor
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.unit.dp
 import com.couplesavings.couplesavings.data.*
 import kotlinx.coroutines.delay
@@ -20,8 +22,8 @@ import java.util.*
 
 /**
  * [INPUT]: 依赖 ApiService / GoldPrice / 数据模型
- * [OUTPUT]: 对外提供 MainScreen 与三个业务屏（总览/资产/流水）+ 增删对话框
- * [POS]: ui 层主躯干，持有账户与流水状态并每 8 秒轮询刷新，模拟实时同步
+ * [OUTPUT]: 对外提供 MainScreen 与三个业务屏（总览/资产/流水）+ 增删对话框 + 收益折线图
+ * [POS]: ui 层主躯干，持有账户/流水/快照状态，每 8 秒轮询刷新并自动记录当日资产快照
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
@@ -35,8 +37,7 @@ private fun gram(v: Double): String = "%.2f 克".format(v)
 private fun fmtTime(iso: String?): String {
     if (iso == null) return ""
     return try {
-        val s = iso.replace("T", " ").take(19)
-        s
+        iso.replace("T", " ").take(19)
     } catch (_: Exception) { iso }
 }
 
@@ -45,9 +46,12 @@ fun MainScreen(profile: Profile?, onLogout: () -> Unit) {
     var tab by remember { mutableStateOf(0) }
     var accounts by remember { mutableStateOf<List<Account>>(emptyList()) }
     var txns by remember { mutableStateOf<List<TransactionRow>>(emptyList()) }
+    var snapshots by remember { mutableStateOf<List<Snapshot>>(emptyList()) }
+    var goldPrice by remember { mutableStateOf<Double?>(null) }
     val scope = rememberCoroutineScope()
 
     fun refresh() = scope.launch {
+        val gold = runCatching { GoldPrice.cnyPerGram() }.getOrNull()
         val a = runCatching { ApiService.listAccounts() }
         val t = runCatching { ApiService.listTransactions() }
         // 续期彻底失败（refresh_token 也失效）→ 弹回登录页
@@ -57,8 +61,17 @@ fun MainScreen(profile: Profile?, onLogout: () -> Unit) {
             onLogout()
             return@launch
         }
-        a.getOrNull()?.let { accounts = it }
-        t.getOrNull()?.let { txns = it }
+        val accs = a.getOrNull() ?: accounts
+        val txnList = t.getOrNull() ?: txns
+        accounts = accs
+        txns = txnList
+        goldPrice = gold ?: goldPrice
+
+        // 记录当日资产快照（折线图历史数据源）——金价拿到才写，避免写入脏数据
+        if (gold != null) {
+            runCatching { ApiService.upsertSnapshot(computeSnapshot(accs, gold)) }
+        }
+        runCatching { ApiService.listSnapshots() }.getOrNull()?.let { snapshots = it }
     }
 
     LaunchedEffect(Unit) { refresh() }
@@ -88,24 +101,45 @@ fun MainScreen(profile: Profile?, onLogout: () -> Unit) {
         }
     ) { padding ->
         when (tab) {
-            0 -> DashboardScreen(Modifier.padding(padding), accounts, txns)
+            0 -> DashboardScreen(Modifier.padding(padding), accounts, txns, goldPrice, snapshots)
             1 -> AccountsScreen(Modifier.padding(padding), accounts) { refresh() }
             2 -> TransactionsScreen(Modifier.padding(padding), txns) { refresh() }
         }
     }
 }
 
+/** 根据当前账户 + 实时金价，算出当日快照（不含 id/couple_id，由后端默认值与 RLS 填充） */
+private fun computeSnapshot(accounts: List<Account>, goldPerGram: Double): Snapshot {
+    val deposits = accounts.filter { it.type == "deposit" }.sumOf { it.balance }
+    val wealth = accounts.filter { it.type == "wealth" }.sumOf { it.balance }
+    val goldAccs = accounts.filter { it.type == "gold" }
+    val goldGrams = goldAccs.sumOf { it.balance }
+    val goldCost = goldAccs.sumOf { it.principal }
+    val goldValue = goldGrams * goldPerGram
+    val goldProfit = goldValue - goldCost
+    val netWorth = deposits + wealth + goldValue
+    val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+    return Snapshot(
+        snapshot_date = date,
+        net_worth = netWorth,
+        deposit_total = deposits,
+        wealth_total = wealth,
+        gold_grams = goldGrams,
+        gold_value = goldValue,
+        gold_profit = goldProfit
+    )
+}
+
 // ---------------------- 总览 ----------------------
 @Composable
-fun DashboardScreen(modifier: Modifier, accounts: List<Account>, txns: List<TransactionRow>) {
-    var goldPrice by remember { mutableStateOf<Double?>(null) }
-    val scope = rememberCoroutineScope()
-
-    suspend fun loadGold() { runCatching { goldPrice = GoldPrice.cnyPerGram() } }
-    LaunchedEffect(Unit) {
-        loadGold()
-        while (true) { delay(30000); loadGold() }
-    }
+fun DashboardScreen(
+    modifier: Modifier,
+    accounts: List<Account>,
+    txns: List<TransactionRow>,
+    goldPrice: Double?,
+    snapshots: List<Snapshot>
+) {
+    var metric by remember { mutableStateOf("net_worth") }
 
     val deposits = accounts.filter { it.type == "deposit" }.sumOf { it.balance }
     val wealth = accounts.filter { it.type == "wealth" }.sumOf { it.balance }
@@ -115,6 +149,17 @@ fun DashboardScreen(modifier: Modifier, accounts: List<Account>, txns: List<Tran
     val goldValue = goldGrams * (goldPrice ?: 0.0)
     val goldProfit = goldValue - goldCost
     val netWorth = deposits + wealth + goldValue
+
+    // 折线图数据：取最近 30 天快照
+    val series = snapshots
+        .takeLast(30)
+        .map { s ->
+            val v = if (metric == "net_worth") s.net_worth else s.gold_profit
+            (s.snapshot_date ?: "", v)
+        }
+    val up = (series.lastOrNull()?.second ?: 0.0) >= (series.firstOrNull()?.second ?: 0.0)
+    val lineColor = if (up) Color(0xFFD32F2F) else Color(0xFF388E3C)
+    val latestVal = series.lastOrNull()?.second ?: if (metric == "net_worth") netWorth else goldProfit
 
     LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -158,6 +203,24 @@ fun DashboardScreen(modifier: Modifier, accounts: List<Account>, txns: List<Tran
                 }
             }
         }
+        // ---- 收益走势折线图 ----
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("收益走势", style = MaterialTheme.typography.titleMedium)
+                        Text(yuan(latestVal), color = lineColor, style = MaterialTheme.typography.titleMedium)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = metric == "net_worth", onClick = { metric = "net_worth" }, label = { Text("净资产") })
+                        FilterChip(selected = metric == "gold_profit", onClick = { metric = "gold_profit" }, label = { Text("积存金盈亏") })
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    TrendChart(Modifier.fillMaxWidth(), series, lineColor)
+                }
+            }
+        }
         item { Text("最近流水", style = MaterialTheme.typography.titleMedium) }
         items(txns.take(10)) { t ->
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -169,6 +232,53 @@ fun DashboardScreen(modifier: Modifier, accounts: List<Account>, txns: List<Tran
                     color = profitColor(if (t.type == "income") 1.0 else -1.0))
             }
         }
+    }
+}
+
+/** 手写 Canvas 折线图，零额外依赖；数据点 <2 时提示"数据积累中" */
+@Composable
+private fun TrendChart(
+    modifier: Modifier,
+    points: List<Pair<String, Double>>,
+    lineColor: Color
+) {
+    if (points.size < 2) {
+        Box(modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+            Text("数据积累中：每天自动记录一次，几天后就有曲线了", color = MaterialTheme.colorScheme.outline)
+        }
+        return
+    }
+    val min = points.minOf { it.second }
+    val max = points.maxOf { it.second }
+    val range = if (max - min == 0.0) 1.0 else max - min
+    Canvas(modifier.fillMaxWidth().height(160.dp).padding(8.dp)) {
+        val w = size.width
+        val h = size.height
+        val pad = 8.dp.toPx()
+        val usableW = w - pad * 2
+        val usableH = h - pad * 2
+        val stepX = if (points.size > 1) usableW / (points.size - 1) else 0f
+        val toX = { i: Int -> pad + i * stepX }
+        val toY = { v: Double -> pad + usableH - ((v - min) / range) * usableH }
+
+        drawLine(Color.LightGray, Offset(pad, h - pad), Offset(w - pad, h - pad), strokeWidth = 1f)
+
+        val fill = Path().apply {
+            moveTo(toX(0), toY(points.first().second))
+            points.forEachIndexed { i, p -> lineTo(toX(i), toY(p.second)) }
+            lineTo(toX(points.lastIndex), h - pad)
+            lineTo(toX(0), h - pad)
+            close()
+        }
+        drawPath(fill, lineColor.copy(alpha = 0.12f))
+
+        val line = Path().apply {
+            moveTo(toX(0), toY(points.first().second))
+            points.forEachIndexed { i, p -> lineTo(toX(i), toY(p.second)) }
+        }
+        drawPath(line, lineColor, strokeWidth = 2.5f)
+
+        drawCircle(lineColor, 3.dp.toPx(), Offset(toX(points.lastIndex), toY(points.last().second)))
     }
 }
 

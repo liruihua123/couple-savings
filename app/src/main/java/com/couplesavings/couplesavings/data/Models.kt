@@ -57,6 +57,21 @@ data class TransactionRow(
     val created_at: String? = null
 )
 
+/** 每日资产快照（折线图历史数据源）。snapshot_date 留空时由数据库默认当天 */
+@Serializable
+data class Snapshot(
+    val id: String? = null,
+    val couple_id: String? = null,
+    val snapshot_date: String? = null,
+    val net_worth: Double = 0.0,
+    val deposit_total: Double = 0.0,
+    val wealth_total: Double = 0.0,
+    val gold_grams: Double = 0.0,
+    val gold_value: Double = 0.0,
+    val gold_profit: Double = 0.0,
+    val created_at: String? = null
+)
+
 @Serializable
 data class AuthUser(
     val id: String,

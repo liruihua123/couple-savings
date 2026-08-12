@@ -131,3 +131,26 @@ drop policy if exists txns_all on public.transactions;
 create policy txns_all on public.transactions for all
   using ( couple_id = (select couple_id from public.profiles where id = auth.uid()) )
   with check ( couple_id = (select couple_id from public.profiles where id = auth.uid()) );
+
+-- 5) 每日资产快照（收益折线图的历史数据源）
+--    App 每次刷新会自动 upsert 当天的净资产 / 积存金盈亏，折线图从这里读历史
+create table if not exists public.snapshots (
+  id              uuid primary key default gen_random_uuid(),
+  couple_id       uuid references public.couples(id) on delete cascade,
+  snapshot_date   date not null default current_date,
+  net_worth       numeric not null default 0,   -- 共同净资产(元)
+  deposit_total   numeric not null default 0,   -- 存款合计(元)
+  wealth_total    numeric not null default 0,   -- 理财净值合计(元)
+  gold_grams      numeric not null default 0,   -- 积存金持有克数
+  gold_value      numeric not null default 0,   -- 积存金实时市值(元)
+  gold_profit     numeric not null default 0,   -- 积存金浮动盈亏(元)
+  created_at      timestamptz default now(),
+  updated_at      timestamptz default now(),
+  unique (couple_id, snapshot_date)             -- 每对情侣每天一条，upsert 幂等
+);
+
+alter table public.snapshots enable row level security;
+drop policy if exists snapshots_all on public.snapshots;
+create policy snapshots_all on public.snapshots for all
+  using ( couple_id = (select couple_id from public.profiles where id = auth.uid()) )
+  with check ( couple_id = (select couple_id from public.profiles where id = auth.uid()) );
