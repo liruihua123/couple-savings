@@ -223,7 +223,7 @@ object ApiService {
         val resp = withAuth {
             httpRequest(
                 "GET",
-                "${SupabaseConfig.URL}/rest/v1/accounts?couple_id=eq.${me.couple_id}&select=*&order=created_at.desc",
+                "${SupabaseConfig.URL}/rest/v1/accounts?select=*&order=created_at.desc",
                 null, authHeaders()
             )
         }
@@ -269,7 +269,7 @@ object ApiService {
         val resp = withAuth {
             httpRequest(
                 "GET",
-                "${SupabaseConfig.URL}/rest/v1/transactions?couple_id=eq.${me.couple_id}&select=*&order=created_at.desc",
+                "${SupabaseConfig.URL}/rest/v1/transactions?select=*&order=created_at.desc",
                 null, authHeaders()
             )
         }
@@ -316,7 +316,7 @@ object ApiService {
         val resp = withAuth {
             httpRequest(
                 "GET",
-                "${SupabaseConfig.URL}/rest/v1/snapshots?couple_id=eq.${me.couple_id}&select=*&order=snapshot_date.asc",
+                "${SupabaseConfig.URL}/rest/v1/snapshots?select=*&order=snapshot_date.asc",
                 null, authHeaders()
             )
         }

@@ -1,6 +1,6 @@
 -- =============================================================
--- 情侣存款 · Supabase 数据库 schema
--- 执行方式：Supabase 后台 → SQL Editor → 粘贴全部 → Run
+-- 情侣存款 · Supabase 数据库 schema（已修正 RLS 递归 + 写入 403）
+-- 执行方式：Supabase 后台 → SQL Editor → 粘贴全部 → Run（可重复执行，幂等）
 -- =============================================================
 
 -- 1) 个人资料表（注册时由触发器自动建行）
@@ -96,6 +96,16 @@ $$;
 grant execute on function public.pair_with_invite(text) to authenticated, anon;
 
 -- =============================================================
+-- 关键：用 SECURITY DEFINER 函数避免 RLS 自引用递归（42P17）
+--   search_path 必须同时包含 public 与 auth，否则 auth.uid() 在
+--   WITH CHECK 阶段解析失败，导致所有写入被 403。
+-- =============================================================
+create or replace function public.user_couple_id()
+returns uuid language sql stable security definer set search_path = public, auth as $$
+  select couple_id from public.profiles where id = auth.uid();
+$$;
+
+-- =============================================================
 -- 行级安全（RLS）：每对情侣只能看/改自己的数据
 -- =============================================================
 alter table public.profiles    enable row level security;
@@ -106,8 +116,7 @@ alter table public.transactions enable row level security;
 -- profiles：自己 + 自己的对象可读；只允许改自己
 drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles for select
-  using ( id = auth.uid()
-          or couple_id = (select couple_id from public.profiles where id = auth.uid()) );
+  using ( id = auth.uid() or couple_id = public.user_couple_id() );
 
 drop policy if exists profiles_update on public.profiles;
 create policy profiles_update on public.profiles for update
@@ -121,16 +130,16 @@ drop policy if exists couples_insert on public.couples;
 create policy couples_insert on public.couples for insert
   with check (partner_a = auth.uid());
 
--- accounts / transactions：仅本对情侣可读写（couple_id 一致）
+-- accounts / transactions：本人可读写自己；对象可读不可改
 drop policy if exists accounts_all on public.accounts;
 create policy accounts_all on public.accounts for all
-  using ( couple_id = (select couple_id from public.profiles where id = auth.uid()) )
-  with check ( couple_id = (select couple_id from public.profiles where id = auth.uid()) );
+  using ( owner_id = auth.uid() or couple_id = public.user_couple_id() )
+  with check ( owner_id = auth.uid() );
 
 drop policy if exists txns_all on public.transactions;
 create policy txns_all on public.transactions for all
-  using ( couple_id = (select couple_id from public.profiles where id = auth.uid()) )
-  with check ( couple_id = (select couple_id from public.profiles where id = auth.uid()) );
+  using ( owner_id = auth.uid() or couple_id = public.user_couple_id() )
+  with check ( owner_id = auth.uid() );
 
 -- 5) 每日资产快照（收益折线图的历史数据源）
 --    App 每次刷新会自动 upsert 当天的净资产 / 积存金盈亏，折线图从这里读历史
@@ -152,5 +161,5 @@ create table if not exists public.snapshots (
 alter table public.snapshots enable row level security;
 drop policy if exists snapshots_all on public.snapshots;
 create policy snapshots_all on public.snapshots for all
-  using ( couple_id = (select couple_id from public.profiles where id = auth.uid()) )
-  with check ( couple_id = (select couple_id from public.profiles where id = auth.uid()) );
+  using ( couple_id = public.user_couple_id() )
+  with check ( couple_id = public.user_couple_id() );

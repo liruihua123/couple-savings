@@ -19,6 +19,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import com.couplesavings.couplesavings.data.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -106,7 +108,7 @@ fun MainScreen(profile: Profile?, onLogout: () -> Unit) {
         }
     ) { padding ->
         when (tab) {
-            0 -> DashboardScreen(Modifier.padding(padding), accounts, txns, goldPrice, snapshots)
+            0 -> DashboardScreen(Modifier.padding(padding), profile, accounts, txns, goldPrice, snapshots)
             1 -> AccountsScreen(Modifier.padding(padding), accounts) { refresh() }
             2 -> TransactionsScreen(Modifier.padding(padding), txns) { refresh() }
         }
@@ -139,12 +141,15 @@ private fun computeSnapshot(accounts: List<Account>, goldPerGram: Double): Snaps
 @Composable
 fun DashboardScreen(
     modifier: Modifier,
+    profile: Profile?,
     accounts: List<Account>,
     txns: List<TransactionRow>,
     goldPrice: Double?,
     snapshots: List<Snapshot>
 ) {
     var metric by remember { mutableStateOf("net_worth") }
+    var copied by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
 
     val deposits = accounts.filter { it.type == "deposit" }.sumOf { it.balance }
     val wealth = accounts.filter { it.type == "wealth" }.sumOf { it.balance }
@@ -167,6 +172,37 @@ fun DashboardScreen(
     val latestVal = series.lastOrNull()?.second ?: if (metric == "net_worth") netWorth else goldProfit
 
     LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // 持久邀请码卡片：配对后也一直能查到，避免"用一次就找不到"
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("我的邀请码（发给对方完成配对）", style = MaterialTheme.typography.titleMedium)
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            profile?.invite_code ?: "—",
+                            style = MaterialTheme.typography.headlineSmall
+                        )
+                        IconButton(onClick = {
+                            profile?.invite_code?.let {
+                                clipboard.setText(AnnotatedString(it))
+                                copied = true
+                            }
+                        }) {
+                            Icon(Icons.Filled.ContentCopy, "复制邀请码")
+                        }
+                    }
+                    Text(
+                        if (copied) "已复制到剪贴板" else "点右侧图标即可复制；配对完成后这里也一直能查到",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
+        }
         item {
             Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                 Column(Modifier.padding(20.dp)) {
