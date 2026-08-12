@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.couplesavings.couplesavings.ui
 
 import android.graphics.Color as AndroidColor
@@ -15,6 +17,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.ExperimentalMaterial3Api
 import com.couplesavings.couplesavings.data.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -151,12 +154,12 @@ fun DashboardScreen(
     val goldProfit = goldValue - goldCost
     val netWorth = deposits + wealth + goldValue
 
-    // 折线图数据：取最近 30 天快照
-    val series = snapshots
+    // 折线图数据：取最近 30 天快照（显式类型，避免推断失败级联报错）
+    val series: List<Pair<String, Double>> = snapshots
         .takeLast(30)
-        .map { s ->
-            val v = if (metric == "net_worth") s.net_worth else s.gold_profit
-            (s.snapshot_date ?: "", v)
+        .map { s: Snapshot ->
+            val v: Double = if (metric == "net_worth") s.net_worth else s.gold_profit
+            Pair(s.snapshot_date ?: "", v)
         }
     val up = (series.lastOrNull()?.second ?: 0.0) >= (series.firstOrNull()?.second ?: 0.0)
     val lineColor = if (up) Color(0xFFD32F2F) else Color(0xFF388E3C)
@@ -259,8 +262,9 @@ private fun TrendChart(
         val usableW = w - pad * 2
         val usableH = h - pad * 2
         val stepX = if (points.size > 1) usableW / (points.size - 1) else 0f
-        val toX = { i: Int -> pad + i * stepX }
-        val toY = { v: Double -> pad + usableH - ((v - min) / range) * usableH }
+        // 坐标一律 Float，toY 显式 toFloat 避免 Double/Float 混用导致 Offset 构造失败
+        val toX: (Int) -> Float = { i -> pad + i * stepX }
+        val toY: (Double) -> Float = { v -> (pad + usableH - ((v - min) / range).toFloat() * usableH) }
 
         drawLine(Color.LightGray, Offset(pad, h - pad), Offset(w - pad, h - pad), strokeWidth = 1f)
 

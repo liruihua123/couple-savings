@@ -29,7 +29,8 @@ object ApiService {
         "Content-Type" to "application/json"
     )
 
-    private fun authHeaders(): Map<String, String> {
+    // 注意：getToken() 是 suspend，故 authHeaders 也必须是 suspend
+    private suspend fun authHeaders(): Map<String, String> {
         val token = SessionManager.getToken().orEmpty()
         return mapOf(
             "apikey" to SupabaseConfig.ANON_KEY,
@@ -61,7 +62,9 @@ object ApiService {
 
     // ---------------- 认证 ----------------
     suspend fun signUp(email: String, password: String): AuthUser {
-        val body = json.encodeToString(mapOf("email" to email, "password" to password))
+        val body = json.encodeToString<Map<String, String>>(
+            mapOf("email" to email, "password" to password)
+        )
         val resp = httpRequest("POST", "${SupabaseConfig.URL}/auth/v1/signup", body, anonHeaders())
         val el = json.parseToJsonElement(resp).jsonObject
         val userEl = el["user"]!!.jsonObject
@@ -77,7 +80,9 @@ object ApiService {
     }
 
     suspend fun signIn(email: String, password: String): AuthUser {
-        val body = json.encodeToString(mapOf("email" to email, "password" to password))
+        val body = json.encodeToString<Map<String, String>>(
+            mapOf("email" to email, "password" to password)
+        )
         val resp = httpRequest(
             "POST",
             "${SupabaseConfig.URL}/auth/v1/token?grant_type=password",
@@ -104,7 +109,7 @@ object ApiService {
     suspend fun refreshSession() {
         val rt = SessionManager.getRefreshToken()
             ?: throw RefreshFailedException("会话已失效，请重新登录")
-        val body = json.encodeToString(mapOf("refresh_token" to rt))
+        val body = json.encodeToString<Map<String, String>>(mapOf("refresh_token" to rt))
         val resp = runCatching {
             httpRequest(
                 "POST",
@@ -146,7 +151,7 @@ object ApiService {
     }
 
     suspend fun pair(inviteCode: String) {
-        val body = json.encodeToString(mapOf("p_invite" to inviteCode))
+        val body = json.encodeToString<Map<String, String>>(mapOf("p_invite" to inviteCode))
         withAuth {
             httpRequest(
                 "POST",
@@ -172,7 +177,7 @@ object ApiService {
     suspend fun insertAccount(acc: Account) {
         val me = myProfile()
         val row = acc.copy(owner_id = me.id, couple_id = me.couple_id)
-        val body = json.encodeToString(listOf(row))
+        val body = json.encodeToString<List<Account>>(listOf(row))
         withAuth {
             httpRequest(
                 "POST", "${SupabaseConfig.URL}/rest/v1/accounts", body,
@@ -188,7 +193,7 @@ object ApiService {
             balance = acc.balance,
             principal = acc.principal
         )
-        val body = json.encodeToString(patch)
+        val body = json.encodeToString<AccountPatch>(patch)
         withAuth {
             httpRequest(
                 "PATCH", "${SupabaseConfig.URL}/rest/v1/accounts?id=eq.${acc.id}", body, authHeaders()
@@ -218,7 +223,7 @@ object ApiService {
     suspend fun insertTransaction(t: TransactionRow) {
         val me = myProfile()
         val row = t.copy(owner_id = me.id, couple_id = me.couple_id)
-        val body = json.encodeToString(listOf(row))
+        val body = json.encodeToString<List<TransactionRow>>(listOf(row))
         withAuth {
             httpRequest(
                 "POST", "${SupabaseConfig.URL}/rest/v1/transactions", body,
@@ -238,7 +243,7 @@ object ApiService {
     suspend fun upsertSnapshot(snap: Snapshot) {
         val me = myProfile()
         val row = snap.copy(couple_id = me.couple_id)
-        val body = json.encodeToString(listOf(row))
+        val body = json.encodeToString<List<Snapshot>>(listOf(row))
         withAuth {
             httpRequest(
                 "POST",
