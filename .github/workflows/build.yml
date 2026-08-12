@@ -18,11 +18,11 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install Gradle 8.5
+      - name: Install Gradle 8.7
         run: |
-          curl -sL https://services.gradle.org/distributions/gradle-8.5-bin.zip -o gradle.zip
+          curl -sL https://services.gradle.org/distributions/gradle-8.7-bin.zip -o gradle.zip
           unzip -q gradle.zip
-          echo "$PWD/gradle-8.5/bin" >> $GITHUB_PATH
+          echo "$PWD/gradle-8.7/bin" >> $GITHUB_PATH
 
       - name: Install Android SDK
         run: |
