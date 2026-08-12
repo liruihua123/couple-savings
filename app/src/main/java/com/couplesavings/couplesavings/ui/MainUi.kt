@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import com.couplesavings.couplesavings.data.*
@@ -281,7 +282,7 @@ private fun TrendChart(
             moveTo(toX(0), toY(points.first().second))
             points.forEachIndexed { i, p -> lineTo(toX(i), toY(p.second)) }
         }
-        drawPath(line, lineColor, strokeWidth = 2.5f)
+        drawPath(line, lineColor, style = Stroke(width = 2.5f))
 
         drawCircle(lineColor, 3.dp.toPx(), Offset(toX(points.lastIndex), toY(points.last().second)))
     }
