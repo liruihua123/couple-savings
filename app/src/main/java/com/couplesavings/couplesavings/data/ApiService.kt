@@ -266,8 +266,15 @@ object ApiService {
 
     suspend fun insertAccount(acc: Account) {
         val me = requireProfile()
-        val row = acc.copy(owner_id = me.id, couple_id = me.couple_id)
-        val body = json.encodeToString(ListSerializer(Account.serializer()), listOf(row))
+        val row = AccountInsert(
+            owner_id = me.id,
+            couple_id = me.couple_id,
+            type = acc.type,
+            name = acc.name,
+            balance = acc.balance,
+            principal = acc.principal
+        )
+        val body = json.encodeToString(ListSerializer(AccountInsert.serializer()), listOf(row))
         withAuth {
             httpRequest(
                 "POST", "${SupabaseConfig.URL}/rest/v1/accounts", body,
@@ -339,8 +346,17 @@ object ApiService {
 
     suspend fun insertTransaction(t: TransactionRow) {
         val me = requireProfile()
-        val row = t.copy(owner_id = me.id, couple_id = me.couple_id)
-        val body = json.encodeToString(ListSerializer(TransactionRow.serializer()), listOf(row))
+        val row = TransactionInsert(
+            owner_id = me.id,
+            couple_id = me.couple_id,
+            account_id = t.account_id,
+            type = t.type,
+            amount = t.amount,
+            category = t.category,
+            note = t.note,
+            created_by_name = t.created_by_name
+        )
+        val body = json.encodeToString(ListSerializer(TransactionInsert.serializer()), listOf(row))
         withAuth {
             httpRequest(
                 "POST", "${SupabaseConfig.URL}/rest/v1/transactions", body,
@@ -404,8 +420,17 @@ object ApiService {
     /** 幂等写入当天快照：按 (couple_id, snapshot_date) 冲突则更新 */
     suspend fun upsertSnapshot(snap: Snapshot) {
         val me = requireProfile()
-        val row = snap.copy(couple_id = me.couple_id)
-        val body = json.encodeToString(ListSerializer(Snapshot.serializer()), listOf(row))
+        val row = SnapshotInsert(
+            couple_id = me.couple_id,
+            snapshot_date = snap.snapshot_date,
+            net_worth = snap.net_worth,
+            deposit_total = snap.deposit_total,
+            wealth_total = snap.wealth_total,
+            gold_grams = snap.gold_grams,
+            gold_value = snap.gold_value,
+            gold_profit = snap.gold_profit
+        )
+        val body = json.encodeToString(ListSerializer(SnapshotInsert.serializer()), listOf(row))
         withAuth {
             httpRequest(
                 "POST",
