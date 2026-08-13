@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>情侣攒钱 · 网页测试台（免安装 APK）</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --line:#e3e6ea; --pri:#2f6feb; --ok:#1a9d5a; --warn:#d98200; --bad:#d33; --mut:#8a909a; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:#1c1f24; }
+  .wrap { max-width:880px; margin:0 auto; padding:18px 16px 60px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--mut); font-size:13px; margin:0 0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+  .card h2 { font-size:15px; margin:0 0 12px; display:flex; align-items:center; gap:8px; }
+  label { font-size:13px; color:#444; display:block; margin:8px 0 4px; }
+  input,select,button,textarea { font-size:14px; font-family:inherit; }
+  input[type=text],input[type=email],input[type=password],input[type=number],select { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  .row > div { flex:1 1 160px; }
+  button { cursor:pointer; border:none; border-radius:8px; padding:9px 14px; background:var(--pri); color:#fff; font-weight:600; }
+  button.ghost { background:#eef1f5; color:#333; }
+  button.danger { background:var(--bad); }
+  button:disabled { opacity:.55; cursor:default; }
+  .pill { font-size:12px; padding:2px 8px; border-radius:999px; background:#eef1f5; color:#555; }
+  .pill.ok { background:#e6f6ee; color:var(--ok); }
+  .pill.warn { background:#fdf2e0; color:var(--warn); }
+  .pill.bad { background:#fdeaea; color:var(--bad); }
+  .muted { color:var(--mut); font-size:12.5px; }
+  .big { font-size:30px; font-weight:700; }
+  .breakdown { font-size:13px; color:#444; margin-top:8px; line-height:1.7; }
+  .note { font-size:13px; padding:10px 12px; border-radius:8px; margin-top:10px; }
+  .note.warn { background:#fdf2e0; color:#8a5a00; border:1px solid #f3d79a; }
+  .note.ok { background:#e6f6ee; color:#0c6b3a; border:1px solid #b6e3c8; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--mut); font-weight:600; }
+  .pos { color:var(--ok); } .neg { color:var(--bad); }
+  .hide { display:none; }
+  code { background:#eef1f5; padding:1px 5px; border-radius:5px; font-size:12px; }
+  .kv { font-size:13px; line-height:1.8; }
+  .kv b { display:inline-block; min-width:84px; color:#555; }
+  .msg { font-size:13px; margin-top:8px; }
+  .err { color:var(--bad); } .okm { color:var(--ok); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>情侣攒钱 · 网页测试台</h1>
+  <p class="sub">连的是你和 App 完全相同的 Supabase 后端，浏览器里就能测全部接口，不用装 APK。打开方式：双击本文件用 Chrome 打开即可。</p>
+
+  <!-- 登录/注册 -->
+  <div class="card" id="authCard">
+    <h2>① 登录 / 注册 <span class="pill" id="authState">未登录</span></h2>
+    <div class="row">
+      <div><label>邮箱</label><input type="email" id="email" placeholder="you@example.com"></div>
+      <div><label>密码（≥6 位）</label><input type="password" id="pw" placeholder="******"></div>
+    </div>
+    <div style="margin-top:12px; display:flex; gap:10px;">
+      <button id="btnSignup">注册</button>
+      <button class="ghost" id="btnSignin">登录</button>
+      <button class="ghost" id="btnLogout">退出</button>
+    </div>
+    <div class="msg" id="authMsg"></div>
+  </div>
+
+  <!-- 已登录区 -->
+  <div id="appArea" class="hide">
+    <!-- 资料 + 净资产 -->
+    <div class="card">
+      <h2>② 我的资料 & 净资产</h2>
+      <div class="kv" id="profileBox"><span class="muted">加载中…</span></div>
+      <div style="margin-top:14px;">
+        <div class="muted">当前净资产（= 存款 + 理财净值 + 积存金市值）</div>
+        <div class="big" id="netWorth">—</div>
+        <div class="breakdown" id="nwBreak"></div>
+      </div>
+      <div class="note warn" id="bugNote">
+        ⚠️ <b>已知 bug（待修）</b>：当前版本「记一笔（收入/支出）」只写流水表，<b>不会改动任何账户余额</b>，所以总资产不会变。下面用「记一笔」后对比净资产即可复现。
+      </div>
+    </div>
+
+    <!-- 账户 -->
+    <div class="card">
+      <h2>③ 账户（加账户会立刻改变净资产）</h2>
+      <table id="accTable"><thead><tr><th>类型</th><th>名称</th><th>余额/克数</th><th>本金/成本</th><th></th></tr></thead>
+        <tbody id="accBody"></tbody></table>
+      <div style="margin-top:12px; border-top:1px dashed var(--line); padding-top:12px;">
+        <div class="row">
+          <div><label>类型</label>
+            <select id="accType"><option value="deposit">存款</option><option value="wealth">理财</option><option value="gold">积存金</option></select></div>
+          <div><label>名称</label><input type="text" id="accName" placeholder="如：余额宝"></div>
+          <div><label id="accBalLbl">余额(元)</label><input type="number" id="accBal" placeholder="0"></div>
+          <div><label id="accPriLbl">本金/成本(元)</label><input type="number" id="accPri" placeholder="0"></div>
+        </div>
+        <div style="margin-top:10px;"><button id="btnAddAcc">+ 添加账户</button> <span class="muted" id="accHint">存款填余额；理财填净值+本金；积存金填克数+累计成本</span></div>
+        <div class="msg" id="accMsg"></div>
+      </div>
+    </div>
+
+    <!-- 流水 -->
+    <div class="card">
+      <h2>④ 流水（记一笔 → 看净资产是否变化）</h2>
+      <table id="txnTable"><thead><tr><th>类型</th><th>分类</th><th>金额</th><th>备注</th><th></th></tr></thead>
+        <tbody id="txnBody"></tbody></table>
+      <div style="margin-top:12px; border-top:1px dashed var(--line); padding-top:12px;">
+        <div class="row">
+          <div><label>类型</label>
+            <select id="txnType"><option value="income">收入</option><option value="expense">支出</option></select></div>
+          <div><label>分类</label><input type="text" id="txnCat" placeholder="如：工资/餐饮"></div>
+          <div><label>金额(元)</label><input type="number" id="txnAmt" placeholder="0"></div>
+          <div><label>备注</label><input type="text" id="txnNote" placeholder="可选"></div>
+        </div>
+        <div style="margin-top:10px;"><button id="btnAddTxn">+ 记一笔</button>
+          <button class="ghost" id="btnBeforeNW">先记录当前净资产</button></div>
+        <div class="msg" id="txnMsg"></div>
+        <div class="note" id="compareNote" style="display:none;"></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="muted" style="margin-top:18px;">说明：本页直连 Supabase REST，与你手机 App 共用同一数据库；RLS 保证你只能看自己的数据。测试完退出即可，无残留。</p>
+</div>
+
+<script>
+const SB_URL = "https://tmhxxodvqhvbpzfmmsfx.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtaHh4b2R2cWh2YnB6Zm1tc2Z4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1MTIzMTUsImV4cCI6MjEwMjA4ODMxNX0.Oxw-47JrE6c4BTRa3IK9btD1psCysn8lQzXOt966Dic";
+
+let TOKEN=null, UID=null, PROFILE=null, GOLD=null, beforeNW=null;
+
+async function api(path, method="GET", body=null, auth=true){
+  const headers={ "apikey":SB_KEY, "Content-Type":"application/json" };
+  if(auth && TOKEN) headers["Authorization"]="Bearer "+TOKEN;
+  let res;
+  try {
+    res=await fetch(SB_URL+path,{method,headers,body:body?JSON.stringify(body):null});
+  } catch(e) {
+    throw new Error("网络请求失败（Failed to fetch）：请改用本机 Chrome 直接打开此 HTML 文件（双击即可），不要用右侧内置预览面板——预览沙箱没有外网权限，请求出不去。若已用 Chrome 仍失败，请确认电脑能访问 supabase.co。");
+  }
+  const text=await res.text();
+  let data=null; try{ data=text?JSON.parse(text):null; }catch(e){}
+  if(!res.ok){
+    let m=(data&&(data.message||data.error_description||data.error))||("HTTP "+res.status);
+    throw new Error(m);
+  }
+  return data;
+}
+const yuan=v=>(v==null?"—":"¥"+Number(v).toLocaleString("zh-CN",{maximumFractionDigits:2}));
+const gram=v=>(v==null?"—":Number(v).toLocaleString("zh-CN",{maximumFractionDigits:2})+" g");
+
+function setMsg(id,txt,cls){ const e=document.getElementById(id); e.textContent=txt||""; e.className="msg "+(cls||""); }
+
+async function fetchGold(){
+  try{
+    const x=await (await fetch("https://api.gold-api.com/price/XAU")).json();
+    const fx=await (await fetch("https://open.er-api.com/v6/latest/USD")).json();
+    const usd=x.price, cny=fx.rates&&fx.rates.CNY;
+    if(usd&&cny) GOLD=(usd*cny)/31.1034768;
+  }catch(e){ GOLD=null; }
+}
+function computeNW(accs){
+  const dep=accs.filter(a=>a.type==='deposit').reduce((s,a)=>s+Number(a.balance||0),0);
+  const wl =accs.filter(a=>a.type==='wealth').reduce((s,a)=>s+Number(a.balance||0),0);
+  const gg =accs.filter(a=>a.type==='gold').reduce((s,a)=>s+Number(a.balance||0),0);
+  const gv = GOLD!=null ? gg*GOLD : 0;
+  return {dep,wl,gg,gv,net:dep+wl+gv};
+}
+
+async function loadProfile(){
+  const rows=await api(`/rest/v1/profiles?select=*&id=eq.${UID}`);
+  if(!rows||!rows.length) throw new Error("profiles 表无你的资料行：请在 Supabase 跑过最新 schema.sql（含触发器自动建资料）");
+  PROFILE=rows[0];
+}
+
+async function refreshAll(){
+  const [accs,txns]=await Promise.all([
+    api(`/rest/v1/accounts?select=*&order=created_at.desc`),
+    api(`/rest/v1/transactions?select=*&order=created_at.desc`)
+  ]);
+  renderProfile();
+  renderAccounts(accs||[]);
+  renderTxns(txns||[]);
+  const nw=computeNW(accs||[]);
+  document.getElementById("netWorth").textContent=yuan(nw.net);
+  document.getElementById("nwBreak").innerHTML=
+    `存款 ${yuan(nw.dep)} ＋ 理财净值 ${yuan(nw.wl)} ＋ 积存金 ${nw.gg.toLocaleString()}g×金价 ${GOLD?yuan(GOLD)+"/g":(GOLD==null?"(获取失败)":"")} = ${yuan(nw.gv)}`;
+}
+
+function renderProfile(){
+  const p=PROFILE||{};
+  document.getElementById("profileBox").innerHTML=
+    `<div><b>邮箱</b>${p.email||"—"}</div>`+
+    `<div><b>邀请码</b><code>${p.invite_code||"—"}</code> <span class="muted">（配对后也一直在这里）</span></div>`+
+    `<div><b>配对状态</b>${p.couple_id? '<span class="pill ok">已配对</span>':'<span class="pill warn">未配对</span>'}</div>`;
+}
+
+function renderAccounts(accs){
+  const b=document.getElementById("accBody"); b.innerHTML="";
+  accs.forEach(a=>{
+    const balLbl=a.type==='gold'? gram(a.balance)+" (克)":yuan(a.balance);
+    const priLbl=a.type==='gold'? "成本 "+yuan(a.principal):(a.type==='wealth'?"本金 "+yuan(a.principal):"—");
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td>${a.type}</td><td>${a.name||""}</td><td>${balLbl}</td><td>${priLbl}</td>`+
+      `<td><button class="danger" onclick="delAcc('${a.id}')">删</button></td>`;
+    b.appendChild(tr);
+  });
+  if(!accs.length) b.innerHTML='<tr><td colspan="5" class="muted">还没有账户，下面加一个试试</td></tr>';
+}
+function renderTxns(txns){
+  const b=document.getElementById("txnBody"); b.innerHTML="";
+  txns.forEach(t=>{
+    const sign=t.type==='income'?"+":"-";
+    const cls=t.type==='income'?"pos":"neg";
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td>${t.type==='income'?'收入':'支出'}</td><td>${t.category||""}</td>`+
+      `<td class="${cls}">${sign}${yuan(t.amount)}</td><td>${t.note||""}</td>`+
+      `<td><button class="danger" onclick="delTxn('${t.id}')">删</button></td>`;
+    b.appendChild(tr);
+  });
+  if(!txns.length) b.innerHTML='<tr><td colspan="5" class="muted">还没有流水，下面记一笔，然后回头看净资产变没变</td></tr>';
+}
+
+async function signup(){
+  setMsg("authMsg","注册中…");
+  try{
+    const d=await api("/auth/v1/signup","POST",{email:email.value,password:pw.value},false);
+    if(!d.session) throw new Error("注册成功但无会话：请到 Supabase 关闭邮件确认 (Authentication→Providers→Email→Autoconfirm)");
+    TOKEN=d.session.access_token; UID=d.user.id;
+    await afterLogin();
+  }catch(e){ setMsg("authMsg",e.message,"err"); }
+}
+async function signin(){
+  setMsg("authMsg","登录中…");
+  try{
+    const d=await api("/auth/v1/token?grant_type=password","POST",{email:email.value,password:pw.value},false);
+    TOKEN=d.access_token; UID=d.user.id;
+    await afterLogin();
+  }catch(e){ setMsg("authMsg",e.message,"err"); }
+}
+async function afterLogin(){
+  try{
+    await loadProfile();
+    document.getElementById("authState").textContent="已登录";
+    document.getElementById("authState").className="pill ok";
+    document.getElementById("authCard").querySelector("h2").firstChild.textContent="① 登录 / 注册 ";
+    document.getElementById("appArea").classList.remove("hide");
+    await fetchGold();
+    await refreshAll();
+    setMsg("authMsg","");
+  }catch(e){ setMsg("authMsg",e.message,"err"); }
+}
+async function logout(){
+  try{ if(TOKEN) await api("/auth/v1/logout","POST",null,true); }catch(e){}
+  TOKEN=UID=PROFILE=null;
+  document.getElementById("authState").textContent="未登录";
+  document.getElementById("authState").className="pill";
+  document.getElementById("appArea").classList.add("hide");
+}
+
+async function addAcc(){
+  setMsg("accMsg","添加中…");
+  try{
+    const type=accType.value;
+    const body=[{ owner_id:UID, couple_id:PROFILE.couple_id||null, type,
+      name:accName.value||type, balance:Number(accBal.value||0), principal:Number(accPri.value||0) }];
+    await api("/rest/v1/accounts","POST",body,true);
+    accName.value=accBal.value=accPri.value="";
+    setMsg("accMsg","已添加，净资产已更新","okm");
+    await refreshAll();
+  }catch(e){ setMsg("accMsg",e.message,"err"); }
+}
+async function delAcc(id){
+  try{ await api(`/rest/v1/accounts?id=eq.${id}`,"DELETE"); await refreshAll(); }catch(e){ alert(e.message); }
+}
+async function addTxn(){
+  setMsg("txnMsg","记一笔中…");
+  try{
+    const body=[{ owner_id:UID, couple_id:PROFILE.couple_id||null,
+      type:txnType.value, amount:Number(txnAmt.value||0), category:txnCat.value||"", note:txnNote.value||"", created_by_name:PROFILE.email||"me" }];
+    await api("/rest/v1/transactions","POST",body,true);
+    txnCat.value=txnAmt.value=txnNote.value="";
+    setMsg("txnMsg","已记录","okm");
+    await refreshAll();
+    // 自动对比
+    if(beforeNW!=null){
+      const nw=computeNW(await api(`/rest/v1/accounts?select=*&order=created_at.desc`));
+      const cn=document.getElementById("compareNote");
+      cn.style.display="block";
+      if(Math.abs(nw.net-beforeNW)<1e-6){
+        cn.className="note warn";
+        cn.innerHTML=`🐞 复现 bug：记一笔前净资产 ${yuan(beforeNW)}，记一笔后仍是 ${yuan(nw.net)} —— <b>没变</b>。这正是当前版本「流水不联动账户余额」导致的问题。`;
+      }else{
+        cn.className="note ok";
+        cn.innerHTML=`✅ 记一笔前 ${yuan(beforeNW)} → 记一笔后 ${yuan(nw.net)}，已联动变化。`;
+      }
+    }
+  }catch(e){ setMsg("txnMsg",e.message,"err"); }
+}
+async function delTxn(id){
+  try{ await api(`/rest/v1/transactions?id=eq.${id}`,"DELETE"); await refreshAll(); }catch(e){ alert(e.message); }
+}
+function snapshotNW(){
+  beforeNW=computeNW_now();
+  document.getElementById("btnBeforeNW").textContent="已记录("+yuan(beforeNW)+")";
+}
+async function computeNW_now(){
+  const accs=await api(`/rest/v1/accounts?select=*&order=created_at.desc`);
+  return computeNW(accs||[]).net;
+}
+
+// 类型切换时改 label
+accType.addEventListener("change",()=>{
+  const t=accType.value;
+  accBalLbl.textContent = t==='gold'?"持有克数(g)":"余额(元)";
+  accPriLbl.textContent = t==='gold'?"累计成本(元)":(t==='wealth'?"投入本金(元)":"本金/成本(元)");
+});
+
+document.getElementById("btnSignup").onclick=signup;
+document.getElementById("btnSignin").onclick=signin;
+document.getElementById("btnLogout").onclick=logout;
+document.getElementById("btnAddAcc").onclick=addAcc;
+document.getElementById("btnAddTxn").onclick=addTxn;
+document.getElementById("btnBeforeNW").onclick=snapshotNW;
+</script>
+</body>
+</html>

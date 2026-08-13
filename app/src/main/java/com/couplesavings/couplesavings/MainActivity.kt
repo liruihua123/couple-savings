@@ -27,7 +27,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         SessionManager.init(this)
         setContent {
-            MaterialTheme {
+            AppTheme {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     RootApp()
                 }

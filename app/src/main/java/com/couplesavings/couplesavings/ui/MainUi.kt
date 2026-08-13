@@ -17,6 +17,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -90,7 +93,12 @@ fun MainScreen(profile: Profile?, onLogout: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("情侣存款") },
+                title = { Text("情侣攒钱") },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    titleContentColor = Color.White,
+                    actionIconContentColor = Color.White
+                ),
                 actions = {
                     IconButton(onClick = onLogout) { Icon(Icons.Filled.Logout, "退出登录") }
                 }
@@ -204,10 +212,24 @@ fun DashboardScreen(
             }
         }
         item {
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                Column(Modifier.padding(20.dp)) {
-                    Text("共同净资产", style = MaterialTheme.typography.titleMedium)
-                    Text(yuan(netWorth), style = MaterialTheme.typography.headlineMedium)
+            Box(
+                Modifier.fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(listOf(Color(0xFF0E9C8A), Color(0xFF36C7B4))),
+                        shape = RoundedCornerShape(20.dp)
+                    )
+                    .padding(22.dp)
+            ) {
+                Column {
+                    Text("共同净资产", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(6.dp))
+                    Text(yuan(netWorth), color = Color.White, style = MaterialTheme.typography.headlineLarge)
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        NetChip("存款", yuan(deposits))
+                        NetChip("理财", yuan(wealth))
+                        NetChip("积存金", yuan(goldValue))
+                    }
                 }
             }
         }
@@ -335,6 +357,18 @@ private fun StatCard(modifier: Modifier, title: String, value: String) {
     }
 }
 
+/** 净资产 Hero 卡上的半透明分项标签 */
+@Composable
+private fun NetChip(label: String, value: String) {
+    Surface(color = Color.White.copy(alpha = 0.18f), shape = RoundedCornerShape(999.dp)) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.width(4.dp))
+            Text(value, color = Color.White, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
 // ---------------------- 资产 ----------------------
 @Composable
 fun AccountsScreen(modifier: Modifier, accounts: List<Account>, onChange: () -> Unit) {
@@ -347,7 +381,18 @@ fun AccountsScreen(modifier: Modifier, accounts: List<Account>, onChange: () -> 
         }
         items(accounts) { a ->
             Card(Modifier.fillMaxWidth()) {
-                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val (ic, tint) = when (a.type) {
+                        "deposit" -> Icons.Filled.AccountBalanceWallet to Color(0xFF0E9C8A)
+                        "wealth" -> Icons.Filled.TrendingUp to Color(0xFF7B61FF)
+                        "gold" -> Icons.Filled.Star to Color(0xFFD4A017)
+                        else -> Icons.Filled.Circle to Color.Gray
+                    }
+                    Box(
+                        Modifier.size(44.dp).background(tint.copy(alpha = 0.12f), RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center
+                    ) { Icon(ic, "", tint = tint) }
+                    Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(a.name, style = MaterialTheme.typography.titleMedium)
                         Text(
