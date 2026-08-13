@@ -26,6 +26,24 @@ object ApiService {
     /** refresh 彻底失败时抛出，调用方据此清除会话并回到登录页 */
     class RefreshFailedException(msg: String) : Exception(msg)
 
+    /**
+     * 内存缓存当前用户资料：几乎所有读写都先调 myProfile()（= 2 次网络往返），
+     * 每 8 秒轮询 + 每次增删改都来一遍会压垮弱网/免费库，表现为卡顿甚至被杀。
+     * 这里缓存一次，后续复用，登录/配对/改昵称后 clearProfileCache 使其失效重拉。
+     */
+    private var cachedProfile: Profile? = null
+
+    private suspend fun requireProfile(): Profile {
+        cachedProfile?.let { return it }
+        return myProfile().also { cachedProfile = it }
+    }
+
+    /** 登录 / 配对 / 改昵称后调用，使下次读取重新拉取最新资料 */
+    fun clearProfileCache() { cachedProfile = null }
+
+    /** 对外暴露当前资料（如改昵称后回写缓存） */
+    suspend fun currentProfile(): Profile = requireProfile()
+
     private fun anonHeaders(): Map<String, String> = mapOf(
         "apikey" to SupabaseConfig.ANON_KEY,
         "Authorization" to "Bearer ${SupabaseConfig.ANON_KEY}",
@@ -113,6 +131,7 @@ object ApiService {
         val at = session["access_token"]?.jsonPrimitive?.content
         val rt = session["refresh_token"]?.jsonPrimitive?.content.orEmpty()
         at?.let { SessionManager.saveTokens(it, rt) }
+        clearProfileCache()
         return AuthUser(id, mail)
     }
 
@@ -136,6 +155,7 @@ object ApiService {
         val token = el["access_token"]!!.jsonPrimitive.content
         val refresh = el["refresh_token"]?.jsonPrimitive?.content.orEmpty()
         SessionManager.saveTokens(token, refresh)
+        clearProfileCache()
         return AuthUser(id, mail)
     }
 
@@ -215,11 +235,25 @@ object ApiService {
                 body, authHeaders()
             )
         }
+        clearProfileCache()
+    }
+
+    /** 修改个人昵称（用于记账时"谁记的"默认带入，参见 MainUi 设置） */
+    suspend fun updateProfileName(name: String) {
+        val me = requireProfile()
+        val body = json.encodeToString(
+            MapSerializer(String.serializer(), String.serializer()),
+            mapOf("display_name" to name)
+        )
+        withAuth {
+            httpRequest("PATCH", "${SupabaseConfig.URL}/rest/v1/profiles?id=eq.${me.id}", body, authHeaders())
+        }
+        clearProfileCache()
     }
 
     // ---------------- 账户 ----------------
     suspend fun listAccounts(): List<Account> {
-        val me = myProfile()
+        val me = requireProfile()
         val resp = withAuth {
             httpRequest(
                 "GET",
@@ -231,7 +265,7 @@ object ApiService {
     }
 
     suspend fun insertAccount(acc: Account) {
-        val me = myProfile()
+        val me = requireProfile()
         val row = acc.copy(owner_id = me.id, couple_id = me.couple_id)
         val body = json.encodeToString(ListSerializer(Account.serializer()), listOf(row))
         withAuth {
@@ -265,7 +299,7 @@ object ApiService {
 
     // ---------------- 流水 ----------------
     suspend fun listTransactions(): List<TransactionRow> {
-        val me = myProfile()
+        val me = requireProfile()
         val resp = withAuth {
             httpRequest(
                 "GET",
@@ -277,7 +311,7 @@ object ApiService {
     }
 
     suspend fun insertTransaction(t: TransactionRow) {
-        val me = myProfile()
+        val me = requireProfile()
         val row = t.copy(owner_id = me.id, couple_id = me.couple_id)
         val body = json.encodeToString(ListSerializer(TransactionRow.serializer()), listOf(row))
         withAuth {
@@ -297,7 +331,7 @@ object ApiService {
     // ---------------- 每日资产快照（折线图） ----------------
     /** 幂等写入当天快照：按 (couple_id, snapshot_date) 冲突则更新 */
     suspend fun upsertSnapshot(snap: Snapshot) {
-        val me = myProfile()
+        val me = requireProfile()
         val row = snap.copy(couple_id = me.couple_id)
         val body = json.encodeToString(ListSerializer(Snapshot.serializer()), listOf(row))
         withAuth {
@@ -312,7 +346,7 @@ object ApiService {
 
     /** 读取本对情侣的全部历史快照，按日期升序 */
     suspend fun listSnapshots(): List<Snapshot> {
-        val me = myProfile()
+        val me = requireProfile()
         val resp = withAuth {
             httpRequest(
                 "GET",

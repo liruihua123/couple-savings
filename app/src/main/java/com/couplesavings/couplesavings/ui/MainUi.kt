@@ -3,6 +3,7 @@
 package com.couplesavings.couplesavings.ui
 
 import android.graphics.Color as AndroidColor
+import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +24,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import com.couplesavings.couplesavings.data.*
 import kotlinx.coroutines.delay
@@ -51,6 +53,17 @@ private fun fmtTime(iso: String?): String {
     } catch (_: Exception) { iso }
 }
 
+// 金价缓存：60 秒内复用，避免 8 秒轮询无脑打外部行情接口（弱网下会拖垮体验）
+private var cachedGold: Double? = null
+private var cachedGoldAt = 0L
+private suspend fun fetchGold(): Double? {
+    val now = System.currentTimeMillis()
+    if (cachedGold != null && now - cachedGoldAt < 60_000) return cachedGold
+    return runCatching { GoldPrice.cnyPerGram() }.getOrNull().also {
+        if (it != null) { cachedGold = it; cachedGoldAt = now }
+    }
+}
+
 @Composable
 fun MainScreen(profile: Profile?, onLogout: () -> Unit) {
     var tab by remember { mutableStateOf(0) }
@@ -58,10 +71,14 @@ fun MainScreen(profile: Profile?, onLogout: () -> Unit) {
     var txns by remember { mutableStateOf<List<TransactionRow>>(emptyList()) }
     var snapshots by remember { mutableStateOf<List<Snapshot>>(emptyList()) }
     var goldPrice by remember { mutableStateOf<Double?>(null) }
+    var profileState by remember { mutableStateOf(profile) }
+    var showSettings by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    fun toast(m: String) = Toast.makeText(context, m, Toast.LENGTH_LONG).show()
 
     fun refresh() = scope.launch {
-        val gold = runCatching { GoldPrice.cnyPerGram() }.getOrNull()
+        val gold = fetchGold()
         val a = runCatching { ApiService.listAccounts() }
         val t = runCatching { ApiService.listTransactions() }
         // 续期彻底失败（refresh_token 也失效）→ 弹回登录页
@@ -73,15 +90,18 @@ fun MainScreen(profile: Profile?, onLogout: () -> Unit) {
         }
         val accs = a.getOrNull() ?: accounts
         val txnList = t.getOrNull() ?: txns
+        // 先拉快照，再决定是否落盘，避免每轮轮询都写库
+        val snaps = runCatching { ApiService.listSnapshots() }.getOrNull() ?: snapshots
         accounts = accs
         txns = txnList
         goldPrice = gold ?: goldPrice
+        snapshots = snaps
 
-        // 记录当日资产快照（折线图历史数据源）——金价拿到才写，避免写入脏数据
-        if (gold != null) {
+        // 每日只记录一次资产快照（折线图历史数据源），8 秒轮询不再无脑写库
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        if (gold != null && snaps.none { it.snapshot_date == today }) {
             runCatching { ApiService.upsertSnapshot(computeSnapshot(accs, gold)) }
         }
-        runCatching { ApiService.listSnapshots() }.getOrNull()?.let { snapshots = it }
     }
 
     LaunchedEffect(Unit) { refresh() }
@@ -100,6 +120,7 @@ fun MainScreen(profile: Profile?, onLogout: () -> Unit) {
                     actionIconContentColor = Color.White
                 ),
                 actions = {
+                    IconButton(onClick = { showSettings = true }) { Icon(Icons.Filled.Settings, "设置") }
                     IconButton(onClick = onLogout) { Icon(Icons.Filled.Logout, "退出登录") }
                 }
             )
@@ -116,10 +137,24 @@ fun MainScreen(profile: Profile?, onLogout: () -> Unit) {
         }
     ) { padding ->
         when (tab) {
-            0 -> DashboardScreen(Modifier.padding(padding), profile, accounts, txns, goldPrice, snapshots)
+            0 -> DashboardScreen(Modifier.padding(padding), profileState, accounts, txns, goldPrice, snapshots)
             1 -> AccountsScreen(Modifier.padding(padding), accounts) { refresh() }
-            2 -> TransactionsScreen(Modifier.padding(padding), txns) { refresh() }
+            2 -> TransactionsScreen(Modifier.padding(padding), profileState, txns) { refresh() }
         }
+    }
+    if (showSettings) {
+        SettingsDialog(
+            initialName = profileState?.display_name ?: "",
+            onDismiss = { showSettings = false },
+            onSave = { name ->
+                scope.launch {
+                    runCatching { ApiService.updateProfileName(name) }
+                        .onFailure { toast("保存失败：" + (it.message ?: "")) }
+                        .onSuccess { profileState = profileState?.copy(display_name = name) }
+                }
+                showSettings = false
+            }
+        )
     }
 }
 
@@ -369,15 +404,43 @@ private fun NetChip(label: String, value: String) {
     }
 }
 
+// ---------------------- 设置（昵称） ----------------------
+@Composable
+private fun SettingsDialog(initialName: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var name by remember { mutableStateOf(initialName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = { onSave(name.trim().ifBlank { "我" }) }) { Text("保存") } },
+        dismissButton = { TextButton(onDismiss) { Text("取消") } },
+        title = { Text("个人设置") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "设置你的昵称，记账时「谁记的」会自动带入，对方也能看到是谁记的。",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                OutlinedTextField(
+                    name, { name = it },
+                    label = { Text("我的昵称（如：我 / 老公 / 小美）") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    )
+}
+
 // ---------------------- 资产 ----------------------
 @Composable
 fun AccountsScreen(modifier: Modifier, accounts: List<Account>, onChange: () -> Unit) {
     var showDialog by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    fun toast(m: String) = Toast.makeText(context, m, Toast.LENGTH_LONG).show()
 
     LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
-            Button(onClick = { showDialog = true }, Modifier.fillMaxWidth()) { Text("+ 添加账户") }
+            Button(onClick = { showDialog = true }, Modifier.fillMaxWidth(), enabled = !busy) { Text(if (busy) "处理中…" else "+ 添加账户") }
         }
         items(accounts) { a ->
             Card(Modifier.fillMaxWidth()) {
@@ -406,8 +469,13 @@ fun AccountsScreen(modifier: Modifier, accounts: List<Account>, onChange: () -> 
                         )
                     }
                     IconButton(onClick = {
-                        scope.launch { runCatching { ApiService.deleteAccount(a.id!!) }; onChange() }
-                    }) { Icon(Icons.Filled.Delete, "删除") }
+                        scope.launch {
+                            busy = true
+                            val err = runCatching { ApiService.deleteAccount(a.id!!) }.exceptionOrNull()?.message
+                            busy = false
+                            if (err != null) toast("删除失败：$err") else onChange()
+                        }
+                    }, enabled = !busy) { Icon(Icons.Filled.Delete, "删除") }
                 }
             }
         }
@@ -415,17 +483,23 @@ fun AccountsScreen(modifier: Modifier, accounts: List<Account>, onChange: () -> 
 
     if (showDialog) {
         AddAccountDialog(
+            busy = busy,
             onDismiss = { showDialog = false },
             onConfirm = { acc ->
-                scope.launch { runCatching { ApiService.insertAccount(acc) }; onChange() }
-                showDialog = false
+                scope.launch {
+                    busy = true
+                    val err = runCatching { ApiService.insertAccount(acc) }.exceptionOrNull()?.message
+                    busy = false
+                    showDialog = false
+                    if (err != null) toast("保存失败：$err") else onChange()
+                }
             }
         )
     }
 }
 
 @Composable
-private fun AddAccountDialog(onDismiss: () -> Unit, onConfirm: (Account) -> Unit) {
+private fun AddAccountDialog(busy: Boolean, onDismiss: () -> Unit, onConfirm: (Account) -> Unit) {
     var type by remember { mutableStateOf("deposit") }
     var name by remember { mutableStateOf("") }
     var balance by remember { mutableStateOf("") }
@@ -450,7 +524,7 @@ private fun AddAccountDialog(onDismiss: () -> Unit, onConfirm: (Account) -> Unit
             val b = balance.toDoubleOrNull() ?: 0.0
             val p = principal.toDoubleOrNull() ?: 0.0
             onConfirm(Account(type = type, name = name.ifBlank { typeLabel }, balance = b, principal = p))
-        }) { Text("保存") } },
+        }, enabled = !busy) { Text("保存") } },
         dismissButton = { TextButton(onDismiss) { Text("取消") } },
         title = { Text("添加账户") },
         text = {
@@ -476,12 +550,16 @@ private fun SingleChoiceSegmented(selected: String, onSelect: (String) -> Unit) 
 
 // ---------------------- 流水 ----------------------
 @Composable
-fun TransactionsScreen(modifier: Modifier, txns: List<TransactionRow>, onChange: () -> Unit) {
+fun TransactionsScreen(modifier: Modifier, profile: Profile?, txns: List<TransactionRow>, onChange: () -> Unit) {
     var showDialog by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    fun toast(m: String) = Toast.makeText(context, m, Toast.LENGTH_LONG).show()
+    val defaultWho = profile?.display_name ?: "我"
 
     LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { Button(onClick = { showDialog = true }, Modifier.fillMaxWidth()) { Text("+ 记一笔") } }
+        item { Button(onClick = { showDialog = true }, Modifier.fillMaxWidth(), enabled = !busy) { Text(if (busy) "处理中…" else "+ 记一笔") } }
         items(txns) { t ->
             Card(Modifier.fillMaxWidth()) {
                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -494,8 +572,13 @@ fun TransactionsScreen(modifier: Modifier, txns: List<TransactionRow>, onChange:
                         color = profitColor(if (t.type == "income") 1.0 else -1.0))
                     Spacer(Modifier.width(4.dp))
                     IconButton(onClick = {
-                        scope.launch { runCatching { ApiService.deleteTransaction(t.id!!) }; onChange() }
-                    }) { Icon(Icons.Filled.Delete, "删除") }
+                        scope.launch {
+                            busy = true
+                            val err = runCatching { ApiService.deleteTransaction(t.id!!) }.exceptionOrNull()?.message
+                            busy = false
+                            if (err != null) toast("删除失败：$err") else onChange()
+                        }
+                    }, enabled = !busy) { Icon(Icons.Filled.Delete, "删除") }
                 }
             }
         }
@@ -503,22 +586,29 @@ fun TransactionsScreen(modifier: Modifier, txns: List<TransactionRow>, onChange:
 
     if (showDialog) {
         AddTxnDialog(
+            defaultWho = defaultWho,
+            busy = busy,
             onDismiss = { showDialog = false },
             onConfirm = { t ->
-                scope.launch { runCatching { ApiService.insertTransaction(t) }; onChange() }
-                showDialog = false
+                scope.launch {
+                    busy = true
+                    val err = runCatching { ApiService.insertTransaction(t) }.exceptionOrNull()?.message
+                    busy = false
+                    showDialog = false
+                    if (err != null) toast("保存失败：$err") else onChange()
+                }
             }
         )
     }
 }
 
 @Composable
-private fun AddTxnDialog(onDismiss: () -> Unit, onConfirm: (TransactionRow) -> Unit) {
+private fun AddTxnDialog(defaultWho: String, busy: Boolean, onDismiss: () -> Unit, onConfirm: (TransactionRow) -> Unit) {
     var type by remember { mutableStateOf("expense") }
     var amount by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
-    var who by remember { mutableStateOf("") }
+    var who by remember { mutableStateOf(defaultWho) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -531,7 +621,7 @@ private fun AddTxnDialog(onDismiss: () -> Unit, onConfirm: (TransactionRow) -> U
                     note = note, created_by_name = who.ifBlank { "我" }
                 )
             )
-        }) { Text("保存") } },
+        }, enabled = !busy) { Text("保存") } },
         dismissButton = { TextButton(onDismiss) { Text("取消") } },
         title = { Text("记一笔") },
         text = {

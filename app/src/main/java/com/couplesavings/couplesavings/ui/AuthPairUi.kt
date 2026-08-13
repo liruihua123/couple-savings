@@ -3,6 +3,7 @@ package com.couplesavings.couplesavings.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -12,6 +13,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import com.couplesavings.couplesavings.data.ApiService
 import com.couplesavings.couplesavings.data.Profile
+import com.couplesavings.couplesavings.data.SessionManager
 import kotlinx.coroutines.launch
 
 /**
@@ -24,15 +26,25 @@ import kotlinx.coroutines.launch
 fun AuthScreen(onAuth: (Profile) -> Unit) {
     var email by remember { mutableStateOf("") }
     var pwd by remember { mutableStateOf("") }
+    var remember by remember { mutableStateOf(true) }
     var msg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    // 启动时自动填入已记住的账号密码
+    LaunchedEffect(Unit) {
+        SessionManager.getCredentials()?.let { (e, p) -> email = e; pwd = p }
+    }
 
     fun doAuth(block: suspend () -> Unit) {
         busy = true; msg = ""
         scope.launch {
             runCatching { block() }
-                .onSuccess { runCatching { onAuth(ApiService.myProfile()) } }
+                .onSuccess {
+                    if (remember) SessionManager.saveCredentials(email.trim(), pwd)
+                    else SessionManager.clearCredentials()
+                    runCatching { onAuth(ApiService.myProfile()) }
+                }
                 .onFailure { msg = it.message ?: "操作失败" }
             busy = false
         }
@@ -80,6 +92,11 @@ fun AuthScreen(onAuth: (Profile) -> Unit) {
                     onClick = { doAuth { ApiService.signIn(email.trim(), pwd) } },
                     modifier = Modifier.fillMaxWidth(), enabled = !busy
                 ) { Text("登录") }
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = remember, onCheckedChange = { remember = it })
+                    Text("记住密码（下次自动填入）", style = MaterialTheme.typography.bodyMedium)
+                }
                 if (msg.isNotEmpty()) {
                     Spacer(Modifier.height(10.dp))
                     Text(msg, color = MaterialTheme.colorScheme.error)

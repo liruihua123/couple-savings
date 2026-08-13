@@ -15,6 +15,9 @@ import kotlinx.coroutines.flow.first
 private val Context.dataStore by preferencesDataStore("session")
 private val KEY_TOKEN = stringPreferencesKey("jwt")
 private val KEY_REFRESH = stringPreferencesKey("refresh_token")
+private val KEY_EMAIL = stringPreferencesKey("email")
+private val KEY_PASSWORD = stringPreferencesKey("password")
+private val KEY_REMEMBER = stringPreferencesKey("remember")
 
 object SessionManager {
     private lateinit var ctx: Context
@@ -39,5 +42,22 @@ object SessionManager {
 
     suspend fun clear() {
         ctx.dataStore.edit { it.remove(KEY_TOKEN); it.remove(KEY_REFRESH) }
+    }
+
+    /** 记住密码：保存邮箱与密码（调试 App 取折中，明文存于 DataStore） */
+    suspend fun saveCredentials(email: String, password: String) {
+        ctx.dataStore.edit { it[KEY_EMAIL] = email; it[KEY_PASSWORD] = password; it[KEY_REMEMBER] = "1" }
+    }
+
+    /** 清除记住的密码 */
+    suspend fun clearCredentials() {
+        ctx.dataStore.edit { it.remove(KEY_EMAIL); it.remove(KEY_PASSWORD); it.remove(KEY_REMEMBER) }
+    }
+
+    /** 读取已记住的账号密码；无则返回 null */
+    suspend fun getCredentials(): Pair<String, String>? {
+        val d = ctx.dataStore.data.first()
+        val e = d[KEY_EMAIL]; val p = d[KEY_PASSWORD]
+        return if (!e.isNullOrBlank() && !p.isNullOrBlank()) e to p else null
     }
 }
