@@ -89,3 +89,41 @@ data class AuthUser(
     val id: String,
     val email: String? = null
 )
+
+/**
+ * 仅用于 INSERT 的精简 DTO：显式省略 id / created_at 等由数据库生成的字段，
+ * 避免 kotlinx 把 null 显式序列化后发给 NOT NULL 列而触发 23502。
+ */
+@Serializable
+data class TransactionInsert(
+    val couple_id: String? = null,
+    val owner_id: String,
+    val account_id: String? = null,
+    val type: String,
+    val amount: Double,
+    val category: String,
+    val note: String,
+    val created_by_name: String
+)
+
+@Serializable
+data class AccountInsert(
+    val couple_id: String? = null,
+    val owner_id: String,
+    val type: String,
+    val name: String,
+    val balance: Double,
+    val principal: Double
+)
+
+@Serializable
+data class SnapshotInsert(
+    val couple_id: String? = null,
+    val snapshot_date: String? = null,
+    val net_worth: Double,
+    val deposit_total: Double,
+    val wealth_total: Double,
+    val gold_grams: Double,
+    val gold_value: Double,
+    val gold_profit: Double
+)
