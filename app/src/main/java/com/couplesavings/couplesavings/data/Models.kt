@@ -49,6 +49,7 @@ data class TransactionRow(
     val id: String? = null,
     val couple_id: String? = null,
     val owner_id: String? = null,
+    val account_id: String? = null,
     val type: String = "expense",
     val amount: Double = 0.0,
     val category: String = "",

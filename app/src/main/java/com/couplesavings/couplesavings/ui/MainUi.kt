@@ -19,6 +19,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
@@ -139,7 +141,7 @@ fun MainScreen(profile: Profile?, onLogout: () -> Unit) {
         when (tab) {
             0 -> DashboardScreen(Modifier.padding(padding), profileState, accounts, txns, goldPrice, snapshots)
             1 -> AccountsScreen(Modifier.padding(padding), accounts) { refresh() }
-            2 -> TransactionsScreen(Modifier.padding(padding), profileState, txns) { refresh() }
+            2 -> TransactionsScreen(Modifier.padding(padding), profileState, accounts, txns) { refresh() }
         }
     }
     if (showSettings) {
@@ -434,6 +436,7 @@ private fun SettingsDialog(initialName: String, onDismiss: () -> Unit, onSave: (
 fun AccountsScreen(modifier: Modifier, accounts: List<Account>, onChange: () -> Unit) {
     var showDialog by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var pendingDel by remember { mutableStateOf<Account?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     fun toast(m: String) = Toast.makeText(context, m, Toast.LENGTH_LONG).show()
@@ -441,6 +444,9 @@ fun AccountsScreen(modifier: Modifier, accounts: List<Account>, onChange: () -> 
     LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Button(onClick = { showDialog = true }, Modifier.fillMaxWidth(), enabled = !busy) { Text(if (busy) "处理中…" else "+ 添加账户") }
+        }
+        if (accounts.isEmpty()) {
+            item { Text("还没有账户，点上方「添加账户」记下你的存款 / 理财 / 积存金吧～", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline) }
         }
         items(accounts) { a ->
             Card(Modifier.fillMaxWidth()) {
@@ -468,14 +474,7 @@ fun AccountsScreen(modifier: Modifier, accounts: List<Account>, onChange: () -> 
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
-                    IconButton(onClick = {
-                        scope.launch {
-                            busy = true
-                            val err = runCatching { ApiService.deleteAccount(a.id!!) }.exceptionOrNull()?.message
-                            busy = false
-                            if (err != null) toast("删除失败：$err") else onChange()
-                        }
-                    }, enabled = !busy) { Icon(Icons.Filled.Delete, "删除") }
+                    IconButton(onClick = { pendingDel = a }, enabled = !busy) { Icon(Icons.Filled.Delete, "删除") }
                 }
             }
         }
@@ -491,9 +490,27 @@ fun AccountsScreen(modifier: Modifier, accounts: List<Account>, onChange: () -> 
                     val err = runCatching { ApiService.insertAccount(acc) }.exceptionOrNull()?.message
                     busy = false
                     showDialog = false
-                    if (err != null) toast("保存失败：$err") else onChange()
+                    if (err != null) toast("保存失败：$err") else { toast("已添加 ✓"); onChange() }
                 }
             }
+        )
+    }
+
+    pendingDel?.let { del ->
+        AlertDialog(
+            onDismissRequest = { pendingDel = null },
+            confirmButton = { TextButton(onClick = {
+                pendingDel = null
+                scope.launch {
+                    busy = true
+                    val err = runCatching { ApiService.deleteAccount(del.id!!) }.exceptionOrNull()?.message
+                    busy = false
+                    if (err != null) toast("删除失败：$err") else { toast("已删除"); onChange() }
+                }
+            }) { Text("删除") } },
+            dismissButton = { TextButton(onClick = { pendingDel = null }) { Text("取消") } },
+            title = { Text("确认删除该账户？") },
+            text = { Text("删除「${del.name}」后，关联的流水仍保留但不再计入净资产。") }
         )
     }
 }
@@ -550,9 +567,10 @@ private fun SingleChoiceSegmented(selected: String, onSelect: (String) -> Unit) 
 
 // ---------------------- 流水 ----------------------
 @Composable
-fun TransactionsScreen(modifier: Modifier, profile: Profile?, txns: List<TransactionRow>, onChange: () -> Unit) {
+fun TransactionsScreen(modifier: Modifier, profile: Profile?, accounts: List<Account>, txns: List<TransactionRow>, onChange: () -> Unit) {
     var showDialog by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var pendingDel by remember { mutableStateOf<TransactionRow?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     fun toast(m: String) = Toast.makeText(context, m, Toast.LENGTH_LONG).show()
@@ -560,6 +578,9 @@ fun TransactionsScreen(modifier: Modifier, profile: Profile?, txns: List<Transac
 
     LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { Button(onClick = { showDialog = true }, Modifier.fillMaxWidth(), enabled = !busy) { Text(if (busy) "处理中…" else "+ 记一笔") } }
+        if (txns.isEmpty()) {
+            item { Text("还没有流水，点上方「记一笔」开始记录吧～", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline) }
+        }
         items(txns) { t ->
             Card(Modifier.fillMaxWidth()) {
                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -571,14 +592,7 @@ fun TransactionsScreen(modifier: Modifier, profile: Profile?, txns: List<Transac
                     Text((if (t.type == "income") "+" else "-") + yuan(t.amount),
                         color = profitColor(if (t.type == "income") 1.0 else -1.0))
                     Spacer(Modifier.width(4.dp))
-                    IconButton(onClick = {
-                        scope.launch {
-                            busy = true
-                            val err = runCatching { ApiService.deleteTransaction(t.id!!) }.exceptionOrNull()?.message
-                            busy = false
-                            if (err != null) toast("删除失败：$err") else onChange()
-                        }
-                    }, enabled = !busy) { Icon(Icons.Filled.Delete, "删除") }
+                    IconButton(onClick = { pendingDel = t }, enabled = !busy) { Icon(Icons.Filled.Delete, "删除") }
                 }
             }
         }
@@ -588,6 +602,8 @@ fun TransactionsScreen(modifier: Modifier, profile: Profile?, txns: List<Transac
         AddTxnDialog(
             defaultWho = defaultWho,
             busy = busy,
+            accounts = accounts,
+            myId = profile?.id,
             onDismiss = { showDialog = false },
             onConfirm = { t ->
                 scope.launch {
@@ -595,20 +611,41 @@ fun TransactionsScreen(modifier: Modifier, profile: Profile?, txns: List<Transac
                     val err = runCatching { ApiService.insertTransaction(t) }.exceptionOrNull()?.message
                     busy = false
                     showDialog = false
-                    if (err != null) toast("保存失败：$err") else onChange()
+                    if (err != null) toast("保存失败：$err") else { toast("已记录 ✓"); onChange() }
                 }
             }
+        )
+    }
+
+    pendingDel?.let { del ->
+        AlertDialog(
+            onDismissRequest = { pendingDel = null },
+            confirmButton = { TextButton(onClick = {
+                pendingDel = null
+                scope.launch {
+                    busy = true
+                    val err = runCatching { ApiService.deleteTransaction(del.id!!) }.exceptionOrNull()?.message
+                    busy = false
+                    if (err != null) toast("删除失败：$err") else { toast("已删除"); onChange() }
+                }
+            }) { Text("删除") } },
+            dismissButton = { TextButton(onClick = { pendingDel = null }) { Text("取消") } },
+            title = { Text("确认删除这笔流水？") },
+            text = { Text("「${if (del.type == "income") "收入" else "支出"} · ${del.category} · ${yuan(del.amount)}」删除后关联账户余额会自动冲回。") }
         )
     }
 }
 
 @Composable
-private fun AddTxnDialog(defaultWho: String, busy: Boolean, onDismiss: () -> Unit, onConfirm: (TransactionRow) -> Unit) {
+private fun AddTxnDialog(defaultWho: String, busy: Boolean, accounts: List<Account>, myId: String?, onDismiss: () -> Unit, onConfirm: (TransactionRow) -> Unit) {
     var type by remember { mutableStateOf("expense") }
     var amount by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
     var who by remember { mutableStateOf(defaultWho) }
+    // 仅本人、且非积存金（克）的账户可关联，避免用元金额去动克数
+    val eligible = remember(accounts, myId) { accounts.filter { it.type != "gold" && it.owner_id == myId } }
+    var selAccountId by remember(eligible) { mutableStateOf(eligible.firstOrNull()?.id) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -618,7 +655,8 @@ private fun AddTxnDialog(defaultWho: String, busy: Boolean, onDismiss: () -> Uni
                 TransactionRow(
                     type = type, amount = amt,
                     category = category.ifBlank { "其他" },
-                    note = note, created_by_name = who.ifBlank { "我" }
+                    note = note, created_by_name = who.ifBlank { "我" },
+                    account_id = selAccountId
                 )
             )
         }, enabled = !busy) { Text("保存") } },
@@ -634,6 +672,17 @@ private fun AddTxnDialog(defaultWho: String, busy: Boolean, onDismiss: () -> Uni
                 OutlinedTextField(category, { category = it }, label = { Text("分类（如：餐饮/工资）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(note, { note = it }, label = { Text("备注") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(who, { who = it }, label = { Text("谁记的（如：我/对象）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Text("关联账户（记账后自动加减余额）：", style = MaterialTheme.typography.bodyMedium)
+                if (eligible.isEmpty()) {
+                    Text("你还没有可关联的存款/理财账户，本次仅记录流水。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                } else {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = selAccountId == null, onClick = { selAccountId = null }, label = { Text("不关联") })
+                        eligible.forEach { acc ->
+                            FilterChip(selected = selAccountId == acc.id, onClick = { selAccountId = acc.id }, label = { Text(acc.name) })
+                        }
+                    }
+                }
             }
         }
     )

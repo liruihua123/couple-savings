@@ -48,6 +48,9 @@ create table if not exists public.transactions (
 );
 create index if not exists txns_couple_idx on public.transactions(couple_id);
 
+-- 收支关联账户：记一笔时联动账户余额，净资产才正确（幂等，可重复执行）
+alter table public.transactions add column if not exists account_id uuid references public.accounts(id) on delete set null;
+
 -- =============================================================
 -- 注册即自动建 profile（含 8 位邀请码）
 -- =============================================================

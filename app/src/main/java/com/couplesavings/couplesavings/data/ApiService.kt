@@ -297,6 +297,25 @@ object ApiService {
         }
     }
 
+    /** 读取单个账户（联动余额时用） */
+    suspend fun getAccount(id: String): Account {
+        val resp = withAuth {
+            httpRequest("GET", "${SupabaseConfig.URL}/rest/v1/accounts?id=eq.$id&select=*", null, authHeaders())
+        }
+        return json.decodeFromString<List<Account>>(resp).first()
+    }
+
+    /**
+     * 联动账户余额：收入加、支出减。仅对本人账户生效（RLS 限制）；
+     * 对方账户或异常时静默跳过，不影响流水本身写入。
+     */
+    private suspend fun adjustAccountBalance(id: String, delta: Double) {
+        runCatching {
+            val acc = getAccount(id)
+            updateAccount(acc.copy(balance = acc.balance + delta))
+        }
+    }
+
     // ---------------- 流水 ----------------
     suspend fun listTransactions(): List<TransactionRow> {
         val me = requireProfile()
@@ -320,9 +339,26 @@ object ApiService {
                 authHeaders() + ("Prefer" to "return=representation")
             )
         }
+        // 联动账户余额：收入加、支出减（仅存款/理财类，且为本人的账户）
+        if (t.account_id != null) {
+            val delta = if (t.type == "income") t.amount else -t.amount
+            adjustAccountBalance(t.account_id, delta)
+        }
     }
 
     suspend fun deleteTransaction(id: String) {
+        // 先取回流水，反向冲回账户余额，再删除
+        runCatching {
+            val resp = withAuth {
+                httpRequest("GET", "${SupabaseConfig.URL}/rest/v1/transactions?id=eq.$id&select=*", null, authHeaders())
+            }
+            json.decodeFromString<List<TransactionRow>>(resp).firstOrNull()?.let { row ->
+                if (row.account_id != null) {
+                    val delta = if (row.type == "income") -row.amount else row.amount
+                    adjustAccountBalance(row.account_id, delta)
+                }
+            }
+        }
         withAuth {
             httpRequest("DELETE", "${SupabaseConfig.URL}/rest/v1/transactions?id=eq.$id", null, authHeaders())
         }
