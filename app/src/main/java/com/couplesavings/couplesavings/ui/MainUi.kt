@@ -122,6 +122,7 @@ fun MainScreen(profile: Profile?, onLogout: () -> Unit) {
                     actionIconContentColor = Color.White
                 ),
                 actions = {
+                    IconButton(onClick = { refresh() }) { Icon(Icons.Filled.Refresh, "刷新") }
                     IconButton(onClick = { showSettings = true }) { Icon(Icons.Filled.Settings, "设置") }
                     IconButton(onClick = onLogout) { Icon(Icons.Filled.Logout, "退出登录") }
                 }
@@ -140,7 +141,7 @@ fun MainScreen(profile: Profile?, onLogout: () -> Unit) {
     ) { padding ->
         when (tab) {
             0 -> DashboardScreen(Modifier.padding(padding), profileState, accounts, txns, goldPrice, snapshots)
-            1 -> AccountsScreen(Modifier.padding(padding), accounts) { refresh() }
+            1 -> AccountsScreen(Modifier.padding(padding), accounts, { refresh() }, myId = profileState?.id)
             2 -> TransactionsScreen(Modifier.padding(padding), profileState, accounts, txns) { refresh() }
         }
     }
@@ -303,6 +304,37 @@ fun DashboardScreen(
                 }
             }
         }
+        // ---- 本月收支 ----
+        item {
+            val ym = SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(Date())
+            val monthTxns = txns.filter { it.created_at?.take(7) == ym }
+            val monthIncome = monthTxns.filter { it.type == "income" }.sumOf { it.amount }
+            val monthExpense = monthTxns.filter { it.type == "expense" }.sumOf { it.amount }
+            val monthNet = monthIncome - monthExpense
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("本月收支（$ym）", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column {
+                            Text("收入", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
+                            Text("+${yuan(monthIncome)}", color = profitColor(1.0), style = MaterialTheme.typography.titleMedium)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("支出", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
+                            Text("-${yuan(monthExpense)}", color = profitColor(-1.0), style = MaterialTheme.typography.titleMedium)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("本月净攒", style = MaterialTheme.typography.bodyMedium)
+                        Text(yuan(monthNet), color = profitColor(monthNet), style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+            }
+        }
         // ---- 收益走势折线图 ----
         item {
             Card(Modifier.fillMaxWidth()) {
@@ -433,10 +465,11 @@ private fun SettingsDialog(initialName: String, onDismiss: () -> Unit, onSave: (
 
 // ---------------------- 资产 ----------------------
 @Composable
-fun AccountsScreen(modifier: Modifier, accounts: List<Account>, onChange: () -> Unit) {
+fun AccountsScreen(modifier: Modifier, accounts: List<Account>, onChange: () -> Unit, myId: String? = null) {
     var showDialog by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var pendingDel by remember { mutableStateOf<Account?>(null) }
+    var editAccount by remember { mutableStateOf<Account?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     fun toast(m: String) = Toast.makeText(context, m, Toast.LENGTH_LONG).show()
@@ -463,7 +496,7 @@ fun AccountsScreen(modifier: Modifier, accounts: List<Account>, onChange: () -> 
                     ) { Icon(ic, "", tint = tint) }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(a.name, style = MaterialTheme.typography.titleMedium)
+                        Text(a.name + if (myId != null && a.owner_id != null && a.owner_id != myId) "（对方）" else "", style = MaterialTheme.typography.titleMedium)
                         Text(
                             when (a.type) {
                                 "deposit" -> "存款 · ${yuan(a.balance)}"
@@ -474,23 +507,29 @@ fun AccountsScreen(modifier: Modifier, accounts: List<Account>, onChange: () -> 
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
+                    IconButton(onClick = { editAccount = a }, enabled = !busy) { Icon(Icons.Filled.Edit, "编辑") }
                     IconButton(onClick = { pendingDel = a }, enabled = !busy) { Icon(Icons.Filled.Delete, "删除") }
                 }
             }
         }
     }
 
-    if (showDialog) {
+    if (showDialog || editAccount != null) {
+        val editing = editAccount
         AddAccountDialog(
+            initial = editing,
             busy = busy,
-            onDismiss = { showDialog = false },
+            onDismiss = { showDialog = false; editAccount = null },
             onConfirm = { acc ->
                 scope.launch {
                     busy = true
-                    val err = runCatching { ApiService.insertAccount(acc) }.exceptionOrNull()?.message
+                    val err = if (editing != null)
+                        runCatching { ApiService.updateAccount(acc.copy(id = editing.id)) }.exceptionOrNull()?.message
+                    else
+                        runCatching { ApiService.insertAccount(acc) }.exceptionOrNull()?.message
                     busy = false
-                    showDialog = false
-                    if (err != null) toast("保存失败：$err") else { toast("已添加 ✓"); onChange() }
+                    showDialog = false; editAccount = null
+                    if (err != null) toast("保存失败：$err") else { toast(if (editing != null) "已更新 ✓" else "已添加 ✓"); onChange() }
                 }
             }
         )
@@ -516,11 +555,11 @@ fun AccountsScreen(modifier: Modifier, accounts: List<Account>, onChange: () -> 
 }
 
 @Composable
-private fun AddAccountDialog(busy: Boolean, onDismiss: () -> Unit, onConfirm: (Account) -> Unit) {
-    var type by remember { mutableStateOf("deposit") }
-    var name by remember { mutableStateOf("") }
-    var balance by remember { mutableStateOf("") }
-    var principal by remember { mutableStateOf("") }
+private fun AddAccountDialog(initial: Account? = null, busy: Boolean, onDismiss: () -> Unit, onConfirm: (Account) -> Unit) {
+    var type by remember { mutableStateOf(initial?.type ?: "deposit") }
+    var name by remember { mutableStateOf(initial?.name ?: "") }
+    var balance by remember { mutableStateOf(if (initial != null && initial.balance != 0.0) initial.balance.toString() else "") }
+    var principal by remember { mutableStateOf(if (initial != null && initial.principal != 0.0) initial.principal.toString() else "") }
 
     val typeLabel = when (type) {
         "deposit" -> "余额（元）"
@@ -534,22 +573,48 @@ private fun AddAccountDialog(busy: Boolean, onDismiss: () -> Unit, onConfirm: (A
         "gold" -> "累计投入成本（元）"
         else -> "本金/成本"
     }
+    val prinNeeded = type != "deposit"
+    val b = balance.toDoubleOrNull()
+    val p = principal.toDoubleOrNull()
+    val balValid = b != null && b >= 0 && b.isFinite()
+    val prinValid = if (!prinNeeded) true else (p != null && p >= 0 && p.isFinite())
+    val nameValid = name.isNotBlank()
+    val showBalErr = balance.isNotBlank() && !balValid
+    val showPrinErr = prinNeeded && principal.isNotBlank() && !prinValid
+    val valid = nameValid && balValid && prinValid
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = {
-            val b = balance.toDoubleOrNull() ?: 0.0
-            val p = principal.toDoubleOrNull() ?: 0.0
-            onConfirm(Account(type = type, name = name.ifBlank { typeLabel }, balance = b, principal = p))
-        }, enabled = !busy) { Text("保存") } },
+        confirmButton = {
+            TextButton(onClick = {
+                if (!valid) return@TextButton
+                onConfirm(Account(type = type, name = name.trim(), balance = b!!, principal = if (prinNeeded) p!! else 0.0))
+            }, enabled = !busy && valid) { Text("保存") }
+        },
         dismissButton = { TextButton(onDismiss) { Text("取消") } },
-        title = { Text("添加账户") },
+        title = { Text(if (initial != null) "编辑账户" else "添加账户") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SingleChoiceSegmented(type) { type = it }
-                OutlinedTextField(name, { name = it }, label = { Text("名称（如：余额宝 / 工行积存金）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(balance, { balance = it }, label = { Text(typeLabel) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(principal, { principal = it }, label = { Text(principalLabel) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    name, { name = it },
+                    label = { Text("名称（如：余额宝 / 工行积存金）") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    isError = name.isBlank(),
+                    supportingText = { if (name.isBlank()) Text("请输入账户名称") }
+                )
+                OutlinedTextField(
+                    balance, { balance = it },
+                    label = { Text(typeLabel) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    isError = showBalErr,
+                    supportingText = { if (showBalErr) Text("请输入不小于 0 的数字") }
+                )
+                OutlinedTextField(
+                    principal, { principal = it },
+                    label = { Text(principalLabel) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    isError = showPrinErr,
+                    supportingText = { if (showPrinErr) Text("请输入不小于 0 的数字") }
+                )
             }
         }
     )
@@ -571,6 +636,7 @@ fun TransactionsScreen(modifier: Modifier, profile: Profile?, accounts: List<Acc
     var showDialog by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var pendingDel by remember { mutableStateOf<TransactionRow?>(null) }
+    var editTarget by remember { mutableStateOf<TransactionRow?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     fun toast(m: String) = Toast.makeText(context, m, Toast.LENGTH_LONG).show()
@@ -592,26 +658,32 @@ fun TransactionsScreen(modifier: Modifier, profile: Profile?, accounts: List<Acc
                     Text((if (t.type == "income") "+" else "-") + yuan(t.amount),
                         color = profitColor(if (t.type == "income") 1.0 else -1.0))
                     Spacer(Modifier.width(4.dp))
+                    IconButton(onClick = { editTarget = t }, enabled = !busy) { Icon(Icons.Filled.Edit, "编辑") }
                     IconButton(onClick = { pendingDel = t }, enabled = !busy) { Icon(Icons.Filled.Delete, "删除") }
                 }
             }
         }
     }
 
-    if (showDialog) {
+    if (showDialog || editTarget != null) {
+        val editing = editTarget
         AddTxnDialog(
+            initial = editing,
             defaultWho = defaultWho,
             busy = busy,
             accounts = accounts,
             myId = profile?.id,
-            onDismiss = { showDialog = false },
+            onDismiss = { showDialog = false; editTarget = null },
             onConfirm = { t ->
                 scope.launch {
                     busy = true
-                    val err = runCatching { ApiService.insertTransaction(t) }.exceptionOrNull()?.message
+                    val err = if (editing != null)
+                        runCatching { ApiService.updateTransaction(editing.id!!, t) }.exceptionOrNull()?.message
+                    else
+                        runCatching { ApiService.insertTransaction(t) }.exceptionOrNull()?.message
                     busy = false
-                    showDialog = false
-                    if (err != null) toast("保存失败：$err") else { toast("已记录 ✓"); onChange() }
+                    showDialog = false; editTarget = null
+                    if (err != null) toast("保存失败：$err") else { toast(if (editing != null) "已更新 ✓" else "已记录 ✓"); onChange() }
                 }
             }
         )
@@ -637,39 +709,70 @@ fun TransactionsScreen(modifier: Modifier, profile: Profile?, accounts: List<Acc
 }
 
 @Composable
-private fun AddTxnDialog(defaultWho: String, busy: Boolean, accounts: List<Account>, myId: String?, onDismiss: () -> Unit, onConfirm: (TransactionRow) -> Unit) {
-    var type by remember { mutableStateOf("expense") }
-    var amount by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("") }
-    var note by remember { mutableStateOf("") }
-    var who by remember { mutableStateOf(defaultWho) }
+private fun AddTxnDialog(
+    initial: TransactionRow? = null,
+    defaultWho: String,
+    busy: Boolean,
+    accounts: List<Account>,
+    myId: String?,
+    onDismiss: () -> Unit,
+    onConfirm: (TransactionRow) -> Unit
+) {
+    var type by remember { mutableStateOf(initial?.type ?: "expense") }
+    var amount by remember { mutableStateOf(if (initial != null && initial.amount != 0.0) initial.amount.toString() else "") }
+    var category by remember { mutableStateOf(initial?.category ?: "") }
+    var note by remember { mutableStateOf(initial?.note ?: "") }
+    var who by remember { mutableStateOf(initial?.created_by_name?.takeIf { it.isNotBlank() } ?: defaultWho) }
     // 仅本人、且非积存金（克）的账户可关联，避免用元金额去动克数
     val eligible = remember(accounts, myId) { accounts.filter { it.type != "gold" && it.owner_id == myId } }
-    var selAccountId by remember(eligible) { mutableStateOf(eligible.firstOrNull()?.id) }
+    var selAccountId by remember(eligible, initial) {
+        mutableStateOf(initial?.account_id ?: eligible.firstOrNull()?.id)
+    }
+
+    val amt = amount.toDoubleOrNull()
+    val amountValid = amt != null && amt > 0 && amt.isFinite()
+    val showAmountErr = amount.isNotBlank() && !amountValid
+    val cats = if (type == "income")
+        listOf("工资", "红包", "理财收益", "兼职", "其他")
+    else
+        listOf("餐饮", "交通", "购物", "居家", "医疗", "娱乐", "其他")
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = {
-            val amt = amount.toDoubleOrNull() ?: 0.0
-            onConfirm(
-                TransactionRow(
-                    type = type, amount = amt,
-                    category = category.ifBlank { "其他" },
-                    note = note, created_by_name = who.ifBlank { "我" },
-                    account_id = selAccountId
+        confirmButton = {
+            TextButton(onClick = {
+                if (!amountValid) return@TextButton
+                onConfirm(
+                    TransactionRow(
+                        type = type, amount = amt!!,
+                        category = category.ifBlank { "其他" },
+                        note = note, created_by_name = who.ifBlank { "我" },
+                        account_id = selAccountId
+                    )
                 )
-            )
-        }, enabled = !busy) { Text("保存") } },
+            }, enabled = !busy && amountValid) { Text("保存") }
+        },
         dismissButton = { TextButton(onDismiss) { Text("取消") } },
-        title = { Text("记一笔") },
+        title = { Text(if (initial != null) "编辑这笔流水" else "记一笔") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected = type == "expense", onClick = { type = "expense" }, label = { Text("支出") })
                     FilterChip(selected = type == "income", onClick = { type = "income" }, label = { Text("收入") })
                 }
-                OutlinedTextField(amount, { amount = it }, label = { Text("金额（元）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(category, { category = it }, label = { Text("分类（如：餐饮/工资）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    amount, { amount = it },
+                    label = { Text("金额（元）") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    isError = showAmountErr,
+                    supportingText = { if (showAmountErr) Text("请输入大于 0 的金额") }
+                )
+                OutlinedTextField(category, { category = it }, label = { Text("分类") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    cats.forEach { c ->
+                        FilterChip(selected = category == c, onClick = { category = c }, label = { Text(c) })
+                    }
+                }
                 OutlinedTextField(note, { note = it }, label = { Text("备注") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(who, { who = it }, label = { Text("谁记的（如：我/对象）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Text("关联账户（记账后自动加减余额）：", style = MaterialTheme.typography.bodyMedium)

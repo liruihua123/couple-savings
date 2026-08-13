@@ -305,6 +305,14 @@ object ApiService {
         return json.decodeFromString<List<Account>>(resp).first()
     }
 
+    /** 读取单条流水（编辑时先取回旧值用于反向冲回） */
+    suspend fun getTransaction(id: String): TransactionRow {
+        val resp = withAuth {
+            httpRequest("GET", "${SupabaseConfig.URL}/rest/v1/transactions?id=eq.$id&select=*", null, authHeaders())
+        }
+        return json.decodeFromString<List<TransactionRow>>(resp).first()
+    }
+
     /**
      * 联动账户余额：收入加、支出减。仅对本人账户生效（RLS 限制）；
      * 对方账户或异常时静默跳过，不影响流水本身写入。
@@ -361,6 +369,34 @@ object ApiService {
         }
         withAuth {
             httpRequest("DELETE", "${SupabaseConfig.URL}/rest/v1/transactions?id=eq.$id", null, authHeaders())
+        }
+    }
+
+    /**
+     * 编辑流水：先反向冲回旧账户余额，再对（可能不同的）新账户应用新余额，最后 PATCH 流水行。
+     * 旧账户 == 新账户时，net 效果等于"撤销旧 delta + 应用新 delta"，金额/类型改了也正确。
+     */
+    suspend fun updateTransaction(id: String, t: TransactionRow) {
+        val old = runCatching { getTransaction(id) }.getOrNull()
+        if (old?.account_id != null) {
+            val rev = if (old.type == "income") -old.amount else old.amount
+            adjustAccountBalance(old.account_id, rev)
+        }
+        if (t.account_id != null) {
+            val d = if (t.type == "income") t.amount else -t.amount
+            adjustAccountBalance(t.account_id, d)
+        }
+        val patch = TransactionPatch(
+            type = t.type,
+            amount = t.amount,
+            category = t.category,
+            note = t.note,
+            created_by_name = t.created_by_name,
+            account_id = t.account_id
+        )
+        val body = json.encodeToString(TransactionPatch.serializer(), patch)
+        withAuth {
+            httpRequest("PATCH", "${SupabaseConfig.URL}/rest/v1/transactions?id=eq.$id", body, authHeaders())
         }
     }
 

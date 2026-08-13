@@ -44,6 +44,17 @@ data class AccountPatch(
     val principal: Double
 )
 
+/** 流水的可编辑字段（PATCH 用）。不含 id/couple_id/owner_id/created_at，避免覆盖服务端时间戳 */
+@Serializable
+data class TransactionPatch(
+    val type: String,
+    val amount: Double,
+    val category: String,
+    val note: String,
+    val created_by_name: String,
+    val account_id: String? = null
+)
+
 @Serializable
 data class TransactionRow(
     val id: String? = null,
