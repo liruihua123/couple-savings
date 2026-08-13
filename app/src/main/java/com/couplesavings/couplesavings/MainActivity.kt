@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import com.couplesavings.couplesavings.data.ApiService
 import com.couplesavings.couplesavings.data.Profile
 import com.couplesavings.couplesavings.data.SessionManager
+import com.couplesavings.couplesavings.ui.AppTheme
 import com.couplesavings.couplesavings.ui.AuthScreen
 import com.couplesavings.couplesavings.ui.MainScreen
 import com.couplesavings.couplesavings.ui.PairScreen
